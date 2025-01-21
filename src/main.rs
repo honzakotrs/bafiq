@@ -134,12 +134,33 @@ fn main() -> Result<()> {
     }
 }
 
+/// Get the index path by appending ".bfi" to the original path
+fn get_index_path(input: &Path) -> PathBuf {
+    let mut index_path = input.to_path_buf();
+    let extension = index_path.extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or("");
+    
+    // Append .bfi to the original extension (.bam.bfi or .cram.bfi)
+    index_path.set_extension(format!("{}.bfi", extension));
+    index_path
+}
+
 /// `bafiq count [options] <input.bam>`
 fn cmd_count(args: SharedArgs) -> Result<()> {
     let (required_bits, forbidden_bits) = args.gather_bits()?;
+    let index_path = get_index_path(&args.input);
 
-    eprintln!("Building index from file: {:?}", args.input);
-    let index = FlagIndex::from_path(&args.input)?;
+    let index = if index_path.exists() {
+        eprintln!("Loading existing index from: {:?}", index_path);
+        FlagIndex::from_file(&index_path)?
+    } else {
+        eprintln!("Building index from file: {:?}", args.input);
+        let index = FlagIndex::from_path(&args.input)?;
+        eprintln!("Saving index to: {:?}", index_path);
+        index.save_to_file(&index_path)?;
+        index
+    };
 
     let count = index.count(required_bits, forbidden_bits);
     println!(
@@ -154,9 +175,18 @@ fn cmd_count(args: SharedArgs) -> Result<()> {
 /// Outputs matching reads in SAM format on stdout.
 fn cmd_view(args: SharedArgs) -> Result<()> {
     let (required_bits, forbidden_bits) = args.gather_bits()?;
+    let index_path = get_index_path(&args.input);
 
-    eprintln!("Building index from file: {:?}", args.input);
-    let index = FlagIndex::from_path(&args.input)?;
+    let index = if index_path.exists() {
+        eprintln!("Loading existing index from: {:?}", index_path);
+        FlagIndex::from_file(&index_path)?
+    } else {
+        eprintln!("Building index from file: {:?}", args.input);
+        let index = FlagIndex::from_path(&args.input)?;
+        eprintln!("Saving index to: {:?}", index_path);
+        index.save_to_file(&index_path)?;
+        index
+    };
 
     // Open the file again just to extract the header
     let tmp_reader = rust_htslib::bam::Reader::from_path(&args.input)?;

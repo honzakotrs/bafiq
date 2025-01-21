@@ -2,6 +2,10 @@ use anyhow::Result;
 use rust_htslib::bam;
 use rust_htslib::bam::{Read, Writer};
 use std::path::Path;
+use std::fs::File;
+use std::io::{BufWriter, BufReader};
+use bincode::{serialize_into, deserialize_from};
+use serde::{Serialize, Deserialize};
 
 /// By SAM spec, the lower 12 bits are commonly used.
 const FLAG_MASK: u16 = 0xFFF;
@@ -40,7 +44,7 @@ impl BinInfo {
 }
 
 /// Main index: 4096 bins, each storing info about which blocks contain reads of that flag pattern.
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct FlagIndex {
     bins: Vec<BinInfo>,
 }
@@ -139,5 +143,19 @@ impl FlagIndex {
             }
         }
         Ok(())
+    }
+
+    pub fn save_to_file(&self, path: &Path) -> Result<()> {
+        let file = File::create(path)?;
+        let writer = BufWriter::new(file);
+        serialize_into(writer, self)?;
+        Ok(())
+    }
+
+    pub fn from_file(path: &Path) -> Result<Self> {
+        let file = File::open(path)?;
+        let reader = BufReader::new(file);
+        let index = deserialize_from(reader)?;
+        Ok(index)
     }
 }
