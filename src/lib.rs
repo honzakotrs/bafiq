@@ -13,7 +13,7 @@ const FLAG_MASK: u16 = 0xFFF;
 const N_FLAGS: usize = 1 << 12;
 
 /// For each 12-bit flag combination, we store `(block_id, count_of_reads)` pairs.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct BinInfo {
     block_summaries: Vec<(i64, u64)>,
 }
