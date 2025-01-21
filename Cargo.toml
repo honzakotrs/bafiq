@@ -1,0 +1,10 @@
+[package]
+name = "bafiq"
+description = "BAM Flag Index Query tool"
+version = "0.0.1"
+edition = "2021"
+
+[dependencies]
+rust-htslib = "0.49.0"
+clap = { version = "*", features = ["derive"] }
+anyhow = "1.0"       # optional, for nicer error handling

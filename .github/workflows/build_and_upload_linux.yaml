@@ -1,0 +1,33 @@
+name: Build bafiq (Linux)
+
+on:
+  # Allows manual triggering from the "Actions" tab in GitHub
+  workflow_dispatch:
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      # 1) Check out the repository
+      - uses: actions/checkout@v3
+
+      # 2) Set up the Rust toolchain (stable)
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        # Alternatively, you can use:
+        # uses: actions-rs/toolchain@v1
+        # with:
+        #   profile: minimal
+        #   toolchain: stable
+        #   override: true
+
+      # 3) Build the project in release mode
+      - name: Build bafiq
+        run: cargo build --release
+
+      # 4) Upload the compiled binary as an artifact
+      - name: Upload artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: bafiq-linux
+          path: target/release/bafiq
