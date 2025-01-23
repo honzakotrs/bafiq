@@ -1,11 +1,11 @@
 use anyhow::Result;
+use bincode::{deserialize_from, serialize_into};
 use rust_htslib::bam;
 use rust_htslib::bam::{Read, Writer};
-use std::path::Path;
+use serde::{Deserialize, Serialize};
 use std::fs::File;
-use std::io::{BufWriter, BufReader};
-use bincode::{serialize_into, deserialize_from};
-use serde::{Serialize, Deserialize};
+use std::io::{BufReader, BufWriter};
+use std::path::Path;
 
 /// By SAM spec, the lower 12 bits are commonly used.
 const FLAG_MASK: u16 = 0xFFF;
@@ -51,12 +51,12 @@ pub struct FlagIndex {
 
 impl FlagIndex {
     pub fn new() -> Self {
-        let mut bins = Vec::with_capacity(N_FLAGS);
+        let mut bins: Vec<BinInfo> = Vec::with_capacity(N_FLAGS);
         bins.resize_with(N_FLAGS, BinInfo::new);
         Self { bins }
     }
 
-    /// Build an index by scanning the file once. 
+    /// Build an index by scanning the file once.
     /// For each record:
     ///   - mask the 12-bit flags
     ///   - compute block_id = ( tell() >> 16 )
