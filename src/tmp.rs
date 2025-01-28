@@ -35,6 +35,17 @@ pub fn analyze_first_block(bam_path: &str) -> Result<()> {
 
     // Read the entire BGZF block (excluding the header we already read)
     let mut compressed_block = vec![0u8; block_size - BGZF_HEADER_SIZE];
+    // Check if the block size is valid
+    let block_size = u16::from_le_bytes([header[16], header[17]]) as usize;
+    let expected_size = BGZF_HEADER_SIZE + block_size;
+    if compressed_block.len() != expected_size - BGZF_HEADER_SIZE {
+        return Err(anyhow::anyhow!(
+            "Compressed block size mismatch: expected {}, got {}",
+            expected_size,
+            compressed_block.len()
+        ));
+    }
+
     file.read_exact(&mut compressed_block)?;
 
     // Extract the footer from the compressed block
@@ -49,7 +60,9 @@ pub fn analyze_first_block(bam_path: &str) -> Result<()> {
     );
 
     // Decompress the BGZF block
-    let mut decoder = GzDecoder::new(&compressed_block[..footer_offset]);
+    let footer_offset = compressed_block.len() - BGZF_FOOTER_SIZE;
+    let compressed_data = &compressed_block[..footer_offset];
+    let mut decoder = GzDecoder::new(compressed_data);
     let mut decompressed_data = Vec::new();
     decoder.read_to_end(&mut decompressed_data)?;
 
