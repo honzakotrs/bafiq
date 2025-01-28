@@ -34,18 +34,14 @@ pub fn analyze_first_block(bam_path: &str) -> Result<()> {
     println!("Block size (compressed): {}", block_size);
 
     // Read the entire BGZF block (excluding the header we already read)
-    let mut compressed_block = vec![0u8; block_size - BGZF_HEADER_SIZE];
-    // Check if the block size is valid
-    let block_size = u16::from_le_bytes([header[16], header[17]]) as usize;
-    let expected_size = BGZF_HEADER_SIZE + block_size;
-    if compressed_block.len() != expected_size - BGZF_HEADER_SIZE {
-        return Err(anyhow::anyhow!(
-            "Compressed block size mismatch: expected {}, got {}",
-            expected_size,
-            compressed_block.len()
-        ));
-    }
+    // BSIZE is total block size minus 1
+    let bsize = u16::from_le_bytes([header[16], header[17]]) as usize;
+    // The actual on-disk total size for the entire BGZF block:
+    let total_bgzf_block_size = bsize + 1;
+    // Subtract the 18-byte BGZF header to get the compressed payload + footer:
+    let compressed_block_size = total_bgzf_block_size - BGZF_HEADER_SIZE;
 
+    let mut compressed_block = vec![0u8; compressed_block_size];
     file.read_exact(&mut compressed_block)?;
 
     // Extract the footer from the compressed block
