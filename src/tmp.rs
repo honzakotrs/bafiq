@@ -6,6 +6,7 @@ use std::io::{BufReader, Read};
 
 /// Constants for BGZF parsing.
 const BGZF_HEADER_SIZE: usize = 18;
+const BGZF_FOOTER_SIZE: usize = 8;
 const BAM_HEADER_SIZE: usize = 4; // Record size field in BAM
 
 /// Reads the first BGZF block, decompresses it to count the number of BAM records, and analyzes compressed byte patterns.
@@ -22,17 +23,46 @@ pub fn analyze_first_block(bam_path: &str) -> Result<()> {
     let mut header = [0u8; BGZF_HEADER_SIZE];
     file.read_exact(&mut header)?;
 
-    // Extract block size from the header (16th and 17th bytes)
-    let block_size = u16::from_le_bytes([header[16], header[17]]) as usize + 1;
+    // Validate GZIP magic numbers
+    if header[0..2] != [0x1f, 0x8b] {
+        return Err(anyhow::anyhow!("Invalid GZIP header in BGZF block"));
+    }
 
-    // Read the entire BGZF block (including compressed data and footer)
+    // Extract block size from the header (16th and 17th bytes)
+    let block_size = u16::from_le_bytes([header[16], header[17]]) as usize;
+
+    println!("Block size (compressed): {}", block_size);
+
+    // Read the entire BGZF block (excluding the header we already read)
     let mut compressed_block = vec![0u8; block_size - BGZF_HEADER_SIZE];
     file.read_exact(&mut compressed_block)?;
 
+    // Extract the footer from the compressed block
+    let footer_offset = compressed_block.len() - BGZF_FOOTER_SIZE;
+    let footer = &compressed_block[footer_offset..];
+
+    // Extract uncompressed block size from the footer (last 2 bytes)
+    let uncompressed_size = u16::from_le_bytes([footer[4], footer[5]]) as usize;
+    println!(
+        "Uncompressed block size (from footer): {}",
+        uncompressed_size
+    );
+
     // Decompress the BGZF block
-    let mut decoder = GzDecoder::new(&compressed_block[..]);
+    let mut decoder = GzDecoder::new(&compressed_block[..footer_offset]);
     let mut decompressed_data = Vec::new();
     decoder.read_to_end(&mut decompressed_data)?;
+
+    // Validate decompressed size
+    if decompressed_data.len() != uncompressed_size {
+        return Err(anyhow::anyhow!(
+            "Mismatch between decompressed size ({}) and footer size ({})",
+            decompressed_data.len(),
+            uncompressed_size
+        ));
+    }
+
+    println!("Decompressed block size: {}", decompressed_data.len());
 
     // Count the number of BAM records in the decompressed block
     let mut offset = 0;
@@ -58,7 +88,7 @@ pub fn analyze_first_block(bam_path: &str) -> Result<()> {
     let mut pattern_counts: HashMap<Vec<u8>, usize> = HashMap::new();
     let pattern_size = 4; // Size of the byte patterns to analyze
 
-    for i in 0..=compressed_block.len() - pattern_size {
+    for i in 0..footer_offset - pattern_size {
         let pattern = compressed_block[i..i + pattern_size].to_vec();
         *pattern_counts.entry(pattern).or_insert(0) += 1;
     }
