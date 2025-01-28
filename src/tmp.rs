@@ -49,7 +49,8 @@ pub fn analyze_first_block(bam_path: &str) -> Result<()> {
     let footer = &compressed_block[footer_offset..];
 
     // Extract uncompressed block size from the footer (last 2 bytes)
-    let uncompressed_size = u16::from_le_bytes([footer[4], footer[5]]) as usize;
+    let uncompressed_size =
+        u32::from_le_bytes([footer[4], footer[5], footer[6], footer[7]]) as usize;
     println!(
         "Uncompressed block size (from footer): {}",
         uncompressed_size
