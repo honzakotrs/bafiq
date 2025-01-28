@@ -1,11 +1,10 @@
 use anyhow::{anyhow, Result};
 use clap::{Parser, Subcommand};
 use rust_htslib::bam::{Format, Read as BamRead, Writer};
-use std::fs::File;
-use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
 
 use bafiq::FlagIndex;
+mod tmp;
 
 /// Named flags that map to specific bits in the SAM flag.
 /// We follow common bits used by samtools:
@@ -161,40 +160,9 @@ fn get_index_path(input: &Path) -> PathBuf {
 }
 
 fn cmd_tmp(args: IndexArgs) -> Result<()> {
-    /// Constants for BAM file parsing.
-    const BGZF_HEADER_SIZE: usize = 18;
-    const GZIP_MAGIC: [u8; 2] = [0x1f, 0x8b];
-
-    let file = File::open(args.input)?;
-    let mut reader = BufReader::new(file);
-    let mut block_count = 0;
-
-    loop {
-        // Read the BGZF header
-        let mut header = [0u8; BGZF_HEADER_SIZE];
-        if reader.read_exact(&mut header).is_err() {
-            break; // EOF or error
-        }
-
-        // Validate GZIP magic numbers
-        if header[0..2] != GZIP_MAGIC {
-            return Err(anyhow::anyhow!(
-                "Invalid BGZF block: missing GZIP magic numbers"
-            ));
-        }
-
-        // Extract the total block size from the header (16th and 17th bytes)
-        let block_size = u16::from_le_bytes([header[16], header[17]]) as usize + 1;
-
-        // Skip the rest of the block
-        let mut skip_buffer = vec![0; block_size - BGZF_HEADER_SIZE];
-        reader.read_exact(&mut skip_buffer)?;
-
-        // Increment block count
-        block_count += 1;
-    }
-
-    println!("Block count: {}", block_count);
+    // let block_count = tmp::count_blocks(&args.input)?;
+    // println!("Block count: {}", block_count);
+    tmp::analyze_first_block(&args.input.to_str().unwrap())?;
     Ok(())
 }
 
