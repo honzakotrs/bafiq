@@ -1,8 +1,8 @@
-use std::path::{PathBuf, Path};
+use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, Result};
 use clap::{Parser, Subcommand};
-use rust_htslib::bam::{Format, Writer, Read};
+use rust_htslib::bam::{Format, Read, Writer};
 
 use bafiq::FlagIndex;
 
@@ -76,6 +76,12 @@ pub struct SharedArgs {
     pub input: PathBuf,
 }
 
+#[derive(Debug, Parser)]
+pub struct IndexArgs {
+    /// The input BAM/CRAM file
+    pub input: PathBuf,
+}
+
 impl SharedArgs {
     /// Combine the integer flags and named flags into `(required_bits, forbidden_bits)`.
     /// Samtools logic:
@@ -117,6 +123,8 @@ enum Commands {
 
     /// View (i.e., retrieve/print) reads that match the given flag criteria (SAM output to stdout)
     View(SharedArgs),
+    /// Build the index for the given BAM/CRAM file
+    Index(IndexArgs),
 }
 
 #[derive(Debug, Parser)]
@@ -131,19 +139,30 @@ fn main() -> Result<()> {
     match cli.cmd {
         Commands::Count(args) => cmd_count(args),
         Commands::View(args) => cmd_view(args),
+        Commands::Index(args) => cmd_index(args),
     }
 }
 
 /// Get the index path by appending ".bfi" to the original path
 fn get_index_path(input: &Path) -> PathBuf {
     let mut index_path = input.to_path_buf();
-    let extension = index_path.extension()
+    let extension = index_path
+        .extension()
         .and_then(|ext| ext.to_str())
         .unwrap_or("");
-    
+
     // Append .bfi to the original extension (.bam.bfi or .cram.bfi)
     index_path.set_extension(format!("{}.bfi", extension));
     index_path
+}
+
+/// `bafiq index <input.bam>`
+fn cmd_index(args: IndexArgs) -> Result<()> {
+    let index_path = get_index_path(&args.input);
+    let index = FlagIndex::from_path(&args.input)?;
+    eprintln!("Saving index to: {:?}", index_path);
+    index.save_to_file(&index_path)?;
+    Ok(())
 }
 
 /// `bafiq count [options] <input.bam>`
@@ -151,16 +170,12 @@ fn cmd_count(args: SharedArgs) -> Result<()> {
     let (required_bits, forbidden_bits) = args.gather_bits()?;
     let index_path = get_index_path(&args.input);
 
-    let index = if index_path.exists() {
-        eprintln!("Loading existing index from: {:?}", index_path);
-        FlagIndex::from_file(&index_path)?
-    } else {
-        eprintln!("Building index from file: {:?}", args.input);
-        let index = FlagIndex::from_path(&args.input)?;
-        eprintln!("Saving index to: {:?}", index_path);
-        index.save_to_file(&index_path)?;
-        index
+    if !index_path.exists() {
+        cmd_index(IndexArgs { input: args.input })?;
     };
+
+    eprintln!("Loading existing index from: {:?}", index_path);
+    let index = FlagIndex::from_file(&index_path)?;
 
     let count = index.count(required_bits, forbidden_bits);
     println!(
