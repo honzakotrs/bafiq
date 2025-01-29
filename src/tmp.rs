@@ -57,8 +57,7 @@ pub fn analyze_first_block(bam_path: &str) -> Result<()> {
     );
 
     // Decompress the BGZF block
-    let footer_offset = compressed_block.len() - BGZF_FOOTER_SIZE;
-    let compressed_data = &compressed_block[..footer_offset];
+    let compressed_data = &compressed_block[..];
     let mut decoder = GzDecoder::new(compressed_data);
     let mut decompressed_data = Vec::new();
     decoder.read_to_end(&mut decompressed_data)?;
