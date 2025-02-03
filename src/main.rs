@@ -162,7 +162,7 @@ fn get_index_path(input: &Path) -> PathBuf {
 fn cmd_tmp(args: IndexArgs) -> Result<()> {
     // let block_count = tmp::count_blocks(&args.input)?;
     // println!("Block count: {}", block_count);
-    let record_count = tmp::count_records(&args.input.to_str().unwrap())?;
+    let record_count = tmp::count_bam_records_in_bam_file_minimal(&args.input.to_str().unwrap())?;
     println!("Record count: {}", record_count);
     Ok(())
 }
