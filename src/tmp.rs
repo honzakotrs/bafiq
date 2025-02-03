@@ -126,10 +126,10 @@ pub fn count_bam_records_in_bam_file_minimal(bam_path: &str) -> Result<usize> {
         // Extract BSIZE (bytes 16-17); BSIZE = total block size - 1.
         let bsize = u16::from_le_bytes([header[16], header[17]]) as usize;
         let total_block_size = bsize + 1;
-        eprintln!(
-            "DEBUG: Read BGZF block with total_block_size: {}",
-            total_block_size
-        );
+        // eprintln!(
+        //     "DEBUG: Read BGZF block with total_block_size: {}",
+        //     total_block_size
+        // );
 
         // Basic sanity check on block size.
         if total_block_size < BGZF_HEADER_SIZE + BGZF_FOOTER_SIZE || total_block_size > 65536 {
