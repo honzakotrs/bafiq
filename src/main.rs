@@ -162,7 +162,8 @@ fn get_index_path(input: &Path) -> PathBuf {
 fn cmd_tmp(args: IndexArgs) -> Result<()> {
     // let block_count = tmp::count_blocks(&args.input)?;
     // println!("Block count: {}", block_count);
-    tmp::analyze_first_block(&args.input.to_str().unwrap())?;
+    let record_count = tmp::count_records(&args.input.to_str().unwrap())?;
+    println!("Record count: {}", record_count);
     Ok(())
 }
 

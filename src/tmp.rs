@@ -1,5 +1,6 @@
 use anyhow::Result;
 use flate2::read::GzDecoder;
+use flate2::{Decompress, FlushDecompress, Status};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufReader, Read};
@@ -8,6 +9,66 @@ use std::io::{BufReader, Read};
 const BGZF_HEADER_SIZE: usize = 18;
 const BGZF_FOOTER_SIZE: usize = 8;
 const BAM_HEADER_SIZE: usize = 4; // Record size field in BAM
+
+/// Counts the number of BAM records in a full BGZF block (header + compressed payload + footer)
+/// using minimal streaming decompression.
+///
+/// # Arguments
+/// * `block` - A slice containing the full BGZF block.
+///
+/// # Returns
+/// The number of BAM records (reads) in the block.
+pub fn count_bam_records_in_bgzf_block_minimal(block: &[u8]) -> Result<usize> {
+    // Initialize the decompressor with gzip header processing enabled.
+    let mut decompressor = Decompress::new(true);
+    let mut in_offset = 0;
+    let mut record_count = 0;
+
+    // Buffer to hold decompressed bytes from each call.
+    let mut chunk = [0u8; 4096];
+    // A vector to hold decompressed bytes that have not yet been processed.
+    let mut unconsumed = Vec::new();
+
+    loop {
+        // Decompress a chunk of data.
+        let before_in = decompressor.total_in();
+        let before_out = decompressor.total_out();
+        let status =
+            decompressor.decompress(&block[in_offset..], &mut chunk, FlushDecompress::None)?;
+        let consumed = (decompressor.total_in() - before_in) as usize;
+        in_offset += consumed;
+        let produced = (decompressor.total_out() - before_out) as usize;
+        unconsumed.extend_from_slice(&chunk[..produced]);
+
+        // Process unconsumed bytes to extract complete records.
+        let mut pos = 0;
+        while pos + 4 <= unconsumed.len() {
+            // Read the record size (4 bytes, little-endian)
+            let rec_size = u32::from_le_bytes([
+                unconsumed[pos],
+                unconsumed[pos + 1],
+                unconsumed[pos + 2],
+                unconsumed[pos + 3],
+            ]) as usize;
+            // Check if the full record (header + body) is available.
+            if pos + 4 + rec_size > unconsumed.len() {
+                // Not enough data yet – break out and get more decompressed data.
+                break;
+            }
+            // Skip over this record.
+            pos += 4 + rec_size;
+            record_count += 1;
+        }
+        // Remove processed bytes from the unconsumed buffer.
+        unconsumed.drain(0..pos);
+
+        // If we reached the end of the stream, break out.
+        if status == Status::StreamEnd {
+            break;
+        }
+    }
+    Ok(record_count)
+}
 
 /// Reads the first BGZF block, decompresses it to count the number of BAM records, and analyzes compressed byte patterns.
 ///
@@ -115,39 +176,54 @@ pub fn analyze_first_block(bam_path: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn count_blocks(bam_path: &str) -> Result<u64> {
-    /// Constants for BAM file parsing.
-    const BGZF_HEADER_SIZE: usize = 18;
-    const GZIP_MAGIC: [u8; 2] = [0x1f, 0x8b];
-
+/// This function iterates over all BGZF blocks in the given BAM file,
+/// feeding each block into `count_bam_records_in_bgzf_block_minimal` to
+/// count the number of BAM records without fully decompressing each block.
+pub fn count_records(bam_path: &str) -> Result<usize> {
     let file = File::open(bam_path)?;
     let mut reader = BufReader::new(file);
-    let mut block_count = 0;
+    let mut total_records = 0;
 
     loop {
-        // Read the BGZF header
+        // Read the 18-byte BGZF header.
         let mut header = [0u8; BGZF_HEADER_SIZE];
-        if reader.read_exact(&mut header).is_err() {
-            break; // EOF or error
+        if let Err(e) = reader.read_exact(&mut header) {
+            // If we've reached EOF, we’re done.
+            if e.kind() == std::io::ErrorKind::UnexpectedEof {
+                break;
+            } else {
+                return Err(e.into());
+            }
         }
 
-        // Validate GZIP magic numbers
-        if header[0..2] != GZIP_MAGIC {
-            return Err(anyhow::anyhow!(
-                "Invalid BGZF block: missing GZIP magic numbers"
-            ));
+        // Validate that the header starts with the GZIP magic numbers.
+        if header[0..2] != [0x1f, 0x8b] {
+            return Err(anyhow::anyhow!("Invalid GZIP header in BGZF block"));
         }
 
-        // Extract the total block size from the header (16th and 17th bytes)
-        let block_size = u16::from_le_bytes([header[16], header[17]]) as usize + 1;
+        // Extract BSIZE (stored in bytes 16 and 17) from the header.
+        // BSIZE is defined as the total block size minus one.
+        let bsize = u16::from_le_bytes([header[16], header[17]]) as usize;
+        let total_block_size = bsize + 1;
 
-        // Skip the rest of the block
-        let mut skip_buffer = vec![0; block_size - BGZF_HEADER_SIZE];
-        reader.read_exact(&mut skip_buffer)?;
+        // Determine how many bytes remain in the block (payload + footer).
+        let remainder_size = total_block_size
+            .checked_sub(BGZF_HEADER_SIZE)
+            .ok_or_else(|| anyhow::anyhow!("Invalid BGZF block size"))?;
 
-        // Increment block count
-        block_count += 1;
+        // Read the remaining bytes of this block.
+        let mut remainder = vec![0u8; remainder_size];
+        reader.read_exact(&mut remainder)?;
+
+        // Reassemble the complete BGZF block.
+        let mut block = Vec::with_capacity(total_block_size);
+        block.extend_from_slice(&header);
+        block.extend_from_slice(&remainder);
+
+        // Use our minimal decompression function to count BAM records in the block.
+        let count = count_bam_records_in_bgzf_block_minimal(&block)?;
+        total_records += count;
     }
 
-    Ok(block_count)
+    Ok(total_records)
 }
