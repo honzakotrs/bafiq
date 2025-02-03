@@ -29,26 +29,28 @@ pub fn analyze_first_block(bam_path: &str) -> Result<()> {
     }
 
     // Extract block size from the header (16th and 17th bytes)
-    let block_size = u16::from_le_bytes([header[16], header[17]]) as usize;
-
-    println!("Block size (compressed): {}", block_size);
-
-    // Read the entire BGZF block (excluding the header we already read)
-    // BSIZE is total block size minus 1
     let bsize = u16::from_le_bytes([header[16], header[17]]) as usize;
+    println!("Block size (compressed): {}", bsize);
+
     // The actual on-disk total size for the entire BGZF block:
     let total_bgzf_block_size = bsize + 1;
     // Subtract the 18-byte BGZF header to get the compressed payload + footer:
     let compressed_block_size = total_bgzf_block_size - BGZF_HEADER_SIZE;
 
+    // Read the rest of the BGZF block (compressed payload + footer)
     let mut compressed_block = vec![0u8; compressed_block_size];
     file.read_exact(&mut compressed_block)?;
 
-    // Extract the footer from the compressed block
+    // Reassemble the full BGZF block (header + compressed payload + footer)
+    let mut full_block = Vec::with_capacity(total_bgzf_block_size);
+    full_block.extend_from_slice(&header);
+    full_block.extend_from_slice(&compressed_block);
+
+    // Extract the footer from the compressed block (last 8 bytes of the block)
     let footer_offset = compressed_block.len() - BGZF_FOOTER_SIZE;
     let footer = &compressed_block[footer_offset..];
 
-    // Extract uncompressed block size from the footer (last 2 bytes)
+    // Extract uncompressed block size from the footer (last 4 bytes)
     let uncompressed_size =
         u32::from_le_bytes([footer[4], footer[5], footer[6], footer[7]]) as usize;
     println!(
@@ -56,10 +58,9 @@ pub fn analyze_first_block(bam_path: &str) -> Result<()> {
         uncompressed_size
     );
 
-    // Decompress the BGZF block
-    let compressed_data = &compressed_block[..];
-    let mut decoder = GzDecoder::new(compressed_data);
-    let mut decompressed_data = Vec::new();
+    // Decompress the BGZF block using the full block (which includes the header)
+    let mut decoder = GzDecoder::new(&full_block[..]);
+    let mut decompressed_data = Vec::with_capacity(uncompressed_size);
     decoder.read_to_end(&mut decompressed_data)?;
 
     // Validate decompressed size
@@ -76,7 +77,6 @@ pub fn analyze_first_block(bam_path: &str) -> Result<()> {
     // Count the number of BAM records in the decompressed block
     let mut offset = 0;
     let mut record_count = 0;
-
     while offset + BAM_HEADER_SIZE <= decompressed_data.len() {
         // Read the record size (first 4 bytes of each record)
         let record_size = u32::from_le_bytes([
@@ -90,14 +90,12 @@ pub fn analyze_first_block(bam_path: &str) -> Result<()> {
         offset += BAM_HEADER_SIZE + record_size;
         record_count += 1;
     }
-
     println!("Number of BAM records in the first block: {}", record_count);
 
     // Analyze compressed block for recurring byte patterns
     let mut pattern_counts: HashMap<Vec<u8>, usize> = HashMap::new();
     let pattern_size = 4; // Size of the byte patterns to analyze
-
-    for i in 0..footer_offset - pattern_size {
+    for i in 0..footer_offset.saturating_sub(pattern_size) {
         let pattern = compressed_block[i..i + pattern_size].to_vec();
         *pattern_counts.entry(pattern).or_insert(0) += 1;
     }
