@@ -42,12 +42,12 @@ pub fn count_bam_records_in_bgzf_block_minimal(block: &[u8]) -> Result<usize> {
             FlushDecompress::None
         };
 
-        eprintln!(
-            "DEBUG: in_offset: {}, remaining input.len(): {}, flush_mode: {:?}",
-            in_offset,
-            input.len(),
-            flush_mode
-        );
+        // eprintln!(
+        //     "DEBUG: in_offset: {}, remaining input.len(): {}, flush_mode: {:?}",
+        //     in_offset,
+        //     input.len(),
+        //     flush_mode
+        // );
 
         let before_in = decompressor.total_in();
         let before_out = decompressor.total_out();
@@ -55,14 +55,15 @@ pub fn count_bam_records_in_bgzf_block_minimal(block: &[u8]) -> Result<usize> {
         let consumed = (decompressor.total_in() - before_in) as usize;
         let produced = (decompressor.total_out() - before_out) as usize;
         in_offset += consumed;
-        eprintln!(
-            "DEBUG: status: {:?}, consumed: {}, produced: {}",
-            status, consumed, produced
-        );
+        // eprintln!(
+        //     "DEBUG: status: {:?}, consumed: {}, produced: {}",
+        //     status,
+        //     consumed, produced
+        // );
 
         // If no progress is made, break to avoid an infinite loop.
         if produced == 0 && consumed == 0 {
-            eprintln!("DEBUG: No progress made; breaking out of the loop.");
+            // eprintln!("DEBUG: No progress made; breaking out of the loop.");
             break;
         }
 
@@ -89,7 +90,7 @@ pub fn count_bam_records_in_bgzf_block_minimal(block: &[u8]) -> Result<usize> {
         unconsumed.drain(0..pos);
 
         if status == Status::StreamEnd {
-            eprintln!("DEBUG: reached StreamEnd");
+            // eprintln!("DEBUG: reached StreamEnd");
             break;
         }
     }
@@ -144,10 +145,10 @@ pub fn count_bam_records_in_bam_file_minimal(bam_path: &str) -> Result<usize> {
         let mut block = Vec::with_capacity(total_block_size);
         block.extend_from_slice(&header);
         block.extend_from_slice(&remainder);
-        eprintln!("DEBUG: Processing BGZF block of size: {}", block.len());
+        // eprintln!("DEBUG: Processing BGZF block of size: {}", block.len());
 
         let count = count_bam_records_in_bgzf_block_minimal(&block)?;
-        eprintln!("DEBUG: Block contained {} records", count);
+        // eprintln!("DEBUG: Block contained {} records", count);
         total_records += count;
     }
 
