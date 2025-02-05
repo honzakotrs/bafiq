@@ -27,3 +27,9 @@ bafiq view -f 0x4 -F 0x400 my.bam | samtools view -bS -o unmapped-no-dup.bam
 ```bash
 cargo build --release
 ```
+
+## Version history
+
+### 0.0.4
+
+- Use libdeflater for decompression to achieve 2x speedup in BAM record counting / reading
