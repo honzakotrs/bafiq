@@ -16,4 +16,5 @@ Benchmarking
 
 ```bash
 time release/bafiq index data/hg38.chr22.bam
+time release/bafiq -f 4 data/hg38.chr22.bam
 ```
