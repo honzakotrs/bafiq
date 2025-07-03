@@ -1,10 +1,44 @@
 use anyhow::{anyhow, Result};
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use rust_htslib::bam::{Format, Read as BamRead, Writer};
 use std::path::{Path, PathBuf};
 
-use bafiq::FlagIndex;
-mod tmp;
+use bafiq::{
+    BuildStrategy, FlagIndex, IndexBuilder, IndexManager,
+    SerializableIndex,
+};
+
+/// CLI-friendly strategy names that map to BuildStrategy
+#[derive(Debug, Clone, ValueEnum)]
+pub enum CliStrategy {
+    /// Streaming parallel processing - has receiver mutex contention bottleneck
+    #[value(name = "parallel-streaming")]
+    ParallelStreaming,
+    /// Sequential processing - single-threaded fallback
+    #[value(name = "sequential")]
+    Sequential,
+    /// rust-htslib based - for benchmarking and compatibility
+    #[value(name = "htslib")]
+    HtsLib,
+    /// Chunk-based streaming - better parallelism but higher latency due to batching
+    #[value(name = "chunk-streaming")]
+    ChunkStreaming,
+    /// Optimized parallel chunk streaming - combines immediate streaming with true parallelism (new default)
+    #[value(name = "parallel-chunk-streaming")]
+    ParallelChunkStreaming,
+}
+
+impl From<CliStrategy> for BuildStrategy {
+    fn from(cli_strategy: CliStrategy) -> Self {
+        match cli_strategy {
+            CliStrategy::ParallelStreaming => BuildStrategy::ParallelStreaming,
+            CliStrategy::Sequential => BuildStrategy::Sequential,
+            CliStrategy::HtsLib => BuildStrategy::HtsLib,
+            CliStrategy::ChunkStreaming => BuildStrategy::ChunkStreaming,
+            CliStrategy::ParallelChunkStreaming => BuildStrategy::ParallelChunkStreaming,
+        }
+    }
+}
 
 /// Named flags that map to specific bits in the SAM flag.
 /// We follow common bits used by samtools:
@@ -43,7 +77,6 @@ static NAMED_FLAGS: &[NamedFlag] = &[
         bits_set: 0x100,
         bits_forbid: 0x100,
     },
-    // Add others as needed, e.g. "supplementary" => 0x800, "proper-pair" => 0x2, etc.
 ];
 
 fn find_named_flag(name: &str) -> Option<NamedFlag> {
@@ -80,6 +113,15 @@ pub struct SharedArgs {
 pub struct IndexArgs {
     /// The input BAM/CRAM file
     pub input: PathBuf,
+
+    /// Index building strategy
+    #[arg(
+        long = "strategy",
+        value_enum,
+        default_value = "parallel-chunk-streaming",
+        help = "Index building strategy to use"
+    )]
+    pub strategy: CliStrategy,
 }
 
 impl SharedArgs {
@@ -115,7 +157,7 @@ impl SharedArgs {
     }
 }
 
-/// The top-level CLI definition with two subcommands: `count` and `view`.
+/// The top-level CLI definition with subcommands.
 #[derive(Debug, Subcommand)]
 enum Commands {
     /// Count how many reads match the given flag criteria
@@ -123,10 +165,128 @@ enum Commands {
 
     /// View (i.e., retrieve/print) reads that match the given flag criteria (SAM output to stdout)
     View(SharedArgs),
+
     /// Build the index for the given BAM/CRAM file
     Index(IndexArgs),
-    /// Build the index for the given BAM/CRAM file
+
+    /// Experimental command for testing low-level BGZF approach
     Tmp(IndexArgs),
+
+    /// Query BAM file with automatic caching
+    Query {
+        /// BAM file to query
+        input: PathBuf,
+
+        /// Required bits (hex format, e.g., 0x4 for unmapped)
+        #[arg(long)]
+        required: Option<String>,
+
+        /// Forbidden bits (hex format, e.g., 0x400 for non-duplicates)
+        #[arg(long)]
+        forbidden: Option<String>,
+
+        /// Force rebuild index (ignore cache)
+        #[arg(long)]
+        force_rebuild: bool,
+
+        /// Show unmapped reads
+        #[arg(long)]
+        unmapped: bool,
+
+        /// Show mapped reads only
+        #[arg(long)]
+        mapped: bool,
+
+        /// Show first in pair
+        #[arg(long)]
+        first_in_pair: bool,
+
+        /// Show second in pair  
+        #[arg(long)]
+        second_in_pair: bool,
+
+        /// Show PCR duplicates
+        #[arg(long)]
+        duplicates: bool,
+
+        /// Show non-duplicates
+        #[arg(long)]
+        non_duplicates: bool,
+    },
+
+    /// Fast count (like samtools view -c) - no index building
+    FastCount {
+        /// BAM file to scan
+        input: PathBuf,
+
+        /// Required bits (hex format, e.g., 0x4 for unmapped)
+        #[arg(long)]
+        required: Option<String>,
+
+        /// Forbidden bits (hex format, e.g., 0x400 for non-duplicates)
+        #[arg(long)]
+        forbidden: Option<String>,
+
+        /// Show unmapped reads
+        #[arg(long)]
+        unmapped: bool,
+
+        /// Show mapped reads only
+        #[arg(long)]
+        mapped: bool,
+
+        /// Show first in pair
+        #[arg(long)]
+        first_in_pair: bool,
+
+        /// Show second in pair  
+        #[arg(long)]
+        second_in_pair: bool,
+
+        /// Show PCR duplicates
+        #[arg(long)]
+        duplicates: bool,
+
+        /// Show non-duplicates
+        #[arg(long)]
+        non_duplicates: bool,
+
+        /// Use experimental dual-direction scanning (scan from both ends simultaneously)
+        #[arg(long)]
+        dual_direction: bool,
+
+        /// Use multi-threaded BGZF decompression (like samtools) - experimental
+        #[arg(long)]
+        mt_decomp: bool,
+
+        /// Use simplified parallel decompression (Rayon-based)
+        #[arg(long)]
+        simple_parallel: bool,
+
+        /// Use thread pool parallel decompression (chunked)
+        #[arg(long)]
+        thread_pool: bool,
+    },
+
+    /// Load and query from saved index
+    LoadIndex {
+        /// Saved index file
+        input: PathBuf,
+
+        /// Required bits (hex format)
+        #[arg(long)]
+        required: Option<String>,
+
+        /// Forbidden bits (hex format)
+        #[arg(long)]
+        forbidden: Option<String>,
+    },
+
+    /// Clear saved index for a BAM file
+    ClearIndex(IndexArgs),
+
+    /// Show index information and status
+    IndexInfo(IndexArgs),
 }
 
 #[derive(Debug, Parser)]
@@ -143,6 +303,65 @@ fn main() -> Result<()> {
         Commands::View(args) => cmd_view(args),
         Commands::Index(args) => cmd_index(args),
         Commands::Tmp(args) => cmd_tmp(args),
+        Commands::Query {
+            input,
+            required,
+            forbidden,
+            force_rebuild,
+            unmapped,
+            mapped,
+            first_in_pair,
+            second_in_pair,
+            duplicates,
+            non_duplicates,
+        } => cmd_query(
+            input,
+            required,
+            forbidden,
+            force_rebuild,
+            unmapped,
+            mapped,
+            first_in_pair,
+            second_in_pair,
+            duplicates,
+            non_duplicates,
+        ),
+        Commands::FastCount {
+            input,
+            required,
+            forbidden,
+            unmapped,
+            mapped,
+            first_in_pair,
+            second_in_pair,
+            duplicates,
+            non_duplicates,
+            dual_direction,
+            mt_decomp,
+            simple_parallel,
+            thread_pool,
+        } => cmd_fast_count(
+            input,
+            required,
+            forbidden,
+            unmapped,
+            mapped,
+            first_in_pair,
+            second_in_pair,
+            duplicates,
+            non_duplicates,
+            dual_direction,
+            mt_decomp,
+            simple_parallel,
+            thread_pool,
+        ),
+        Commands::LoadIndex {
+            input,
+            required,
+            forbidden,
+        } => cmd_load_index(input, required, forbidden),
+        Commands::ClearIndex(args) => cmd_clear_index(args),
+        Commands::IndexInfo(args) => cmd_index_info(args),
     }
 }
 
@@ -160,19 +379,32 @@ fn get_index_path(input: &Path) -> PathBuf {
 }
 
 fn cmd_tmp(args: IndexArgs) -> Result<()> {
-    // let block_count = tmp::count_blocks(&args.input)?;
-    // println!("Block count: {}", block_count);
-    let record_count = tmp::count_bam_records_in_bam_file_minimal(&args.input.to_str().unwrap())?;
-    println!("Record count: {}", record_count);
+    // Experimental command for testing and debugging
+    println!("Experimental debugging command");
+    println!("   File: {:?}", args.input);
+    println!("   This command is used for development testing and debugging.");
+
     Ok(())
 }
 
 /// `bafiq index <input.bam>`
+/// Now uses streaming parallel processing by default for optimal performance
 fn cmd_index(args: IndexArgs) -> Result<()> {
     let index_path = get_index_path(&args.input);
-    let index = FlagIndex::from_path(&args.input)?;
-    eprintln!("Saving index to: {:?}", index_path);
+    let strategy: BuildStrategy = args.strategy.into();
+
+    eprintln!("Building index using strategy: {:?}...", strategy);
+    eprintln!("   Input: {:?}", args.input);
+    eprintln!("   Output: {:?}", index_path);
+
+    // Use the IndexBuilder with selected strategy
+    let builder = IndexBuilder::with_strategy(strategy);
+    let index = builder.build(&args.input)?;
+
+    eprintln!("Index built successfully. Saving to file...");
     index.save_to_file(&index_path)?;
+    eprintln!("Index saved to: {:?}", index_path);
+
     Ok(())
 }
 
@@ -182,7 +414,10 @@ fn cmd_count(args: SharedArgs) -> Result<()> {
     let index_path = get_index_path(&args.input);
 
     if !index_path.exists() {
-        cmd_index(IndexArgs { input: args.input })?;
+        cmd_index(IndexArgs {
+            input: args.input,
+            strategy: CliStrategy::ParallelStreaming,
+        })?;
     };
 
     eprintln!("Loading existing index from: {:?}", index_path);
@@ -227,3 +462,334 @@ fn cmd_view(args: SharedArgs) -> Result<()> {
 
     Ok(())
 }
+
+fn cmd_query(
+    input: PathBuf,
+    required: Option<String>,
+    forbidden: Option<String>,
+    force_rebuild: bool,
+    unmapped: bool,
+    mapped: bool,
+    first_in_pair: bool,
+    second_in_pair: bool,
+    duplicates: bool,
+    non_duplicates: bool,
+) -> Result<()> {
+    use std::time::Instant;
+
+    eprintln!("Querying BAM file with automatic caching...");
+    eprintln!("   Input: {:?}", input);
+
+    // Parse flag requirements
+    let (required_bits, forbidden_bits) = if let (Some(req), Some(forb)) = (required, forbidden) {
+        let req_bits = parse_hex_flags(&req)?;
+        let forb_bits = parse_hex_flags(&forb)?;
+        (req_bits, forb_bits)
+    } else {
+        // Use convenience flags
+        let mut req_bits = 0u16;
+        let mut forb_bits = 0u16;
+
+        if unmapped {
+            req_bits |= 0x4;
+        }
+        if mapped {
+            forb_bits |= 0x4;
+        }
+        if first_in_pair {
+            req_bits |= 0x40;
+        }
+        if second_in_pair {
+            req_bits |= 0x80;
+        }
+        if duplicates {
+            req_bits |= 0x400;
+        }
+        if non_duplicates {
+            forb_bits |= 0x400;
+        }
+
+        (req_bits, forb_bits)
+    };
+
+    eprintln!(
+        "   Query: required=0x{:x}, forbidden=0x{:x}",
+        required_bits, forbidden_bits
+    );
+
+    // Load or build index with automatic saving
+    let index_manager = IndexManager::new();
+    let input_str = input.to_str().ok_or_else(|| anyhow!("Invalid file path"))?;
+
+    let start = Instant::now();
+    let serializable_index = index_manager.load_or_build(input_str, force_rebuild)?;
+    let load_time = start.elapsed();
+
+    // Get format info
+    let format_info = serializable_index.get_format_info();
+    eprintln!("   Index format: {}", format_info.format_type);
+    eprintln!("   Load time: {:.3}ms", load_time.as_secs_f64() * 1000.0);
+
+    // Query the index
+    let start = Instant::now();
+    let index = serializable_index.get_index();
+    let result = index.count(required_bits, forbidden_bits);
+    let query_time = start.elapsed();
+
+    eprintln!("Query Results:");
+    eprintln!("   Matching reads: {}", result);
+    eprintln!("   Query time: {:.3}ms", query_time.as_secs_f64() * 1000.0);
+    eprintln!(
+        "   Total time: {:.3}ms",
+        (load_time + query_time).as_secs_f64() * 1000.0
+    );
+
+    Ok(())
+}
+
+fn cmd_load_index(
+    input: PathBuf,
+    required: Option<String>,
+    forbidden: Option<String>,
+) -> Result<()> {
+    use std::time::Instant;
+
+    eprintln!("Loading saved index...");
+    eprintln!("   Input: {:?}", input);
+
+    // Load index
+    let start = Instant::now();
+    let serializable_index = SerializableIndex::load_from_file(&input)?;
+    let load_time = start.elapsed();
+
+    // Show index info
+    let format_info = serializable_index.get_format_info();
+    let cache_info = serializable_index.get_cache_info();
+
+    eprintln!("Index loaded successfully!");
+    eprintln!("   Format: {}", format_info.format_type);
+    eprintln!("   Compression: {:.2}x", format_info.compression_ratio);
+    eprintln!("   Source: {}", cache_info.source_path);
+    eprintln!("   Load time: {:.3}ms", load_time.as_secs_f64() * 1000.0);
+
+    // If query parameters provided, run query
+    if let (Some(req), Some(forb)) = (required, forbidden) {
+        let required_bits = parse_hex_flags(&req)?;
+        let forbidden_bits = parse_hex_flags(&forb)?;
+
+        eprintln!(
+            "Querying: required=0x{:x}, forbidden=0x{:x}",
+            required_bits, forbidden_bits
+        );
+
+        let start = Instant::now();
+        let index = serializable_index.get_index();
+        let result = index.count(required_bits, forbidden_bits);
+        let query_time = start.elapsed();
+
+        eprintln!("Query Results:");
+        eprintln!("   Matching reads: {}", result);
+        eprintln!("   Query time: {:.3}ms", query_time.as_secs_f64() * 1000.0);
+    }
+
+    Ok(())
+}
+
+fn cmd_clear_index(args: IndexArgs) -> Result<()> {
+    let input_str = args
+        .input
+        .to_str()
+        .ok_or_else(|| anyhow!("Invalid file path"))?;
+    let index_manager = IndexManager::new();
+    index_manager.clear_index(input_str)?;
+    Ok(())
+}
+
+fn cmd_index_info(args: IndexArgs) -> Result<()> {
+    eprintln!("Index Information");
+    eprintln!("{}", "=".repeat(50));
+
+    let input_str = args
+        .input
+        .to_str()
+        .ok_or_else(|| anyhow!("Invalid file path"))?;
+    let index_manager = IndexManager::new();
+    let index_path = index_manager.get_index_path(input_str);
+
+    eprintln!("   BAM file: {}", input_str);
+    eprintln!("   Index path: {}", index_path);
+
+    // Check if BAM file exists
+    if !Path::new(input_str).exists() {
+        eprintln!("   BAM file does not exist");
+        return Ok(());
+    }
+
+    let bam_metadata = std::fs::metadata(input_str)?;
+    eprintln!(
+        "   BAM size: {:.1} MB",
+        bam_metadata.len() as f64 / 1_048_576.0
+    );
+
+    // Check index status
+    if Path::new(&index_path).exists() {
+        match SerializableIndex::load_from_file(&index_path) {
+            Ok(saved_index) => {
+                let format_info = saved_index.get_format_info();
+                let cache_info = saved_index.get_cache_info();
+
+                eprintln!("   Index exists");
+                eprintln!("   Index format: {}", format_info.format_type);
+                eprintln!(
+                    "   Index compression: {:.2}x",
+                    format_info.compression_ratio
+                );
+
+                match saved_index.is_stale() {
+                    Ok(false) => eprintln!("   Index is fresh"),
+                    Ok(true) => eprintln!("   Index is stale (BAM file was modified)"),
+                    Err(e) => eprintln!("   Index validation failed: {}", e),
+                }
+
+                eprintln!(
+                    "   Created: {}",
+                    format_timestamp(cache_info.created_timestamp)
+                );
+            }
+            Err(e) => {
+                eprintln!("   Index file exists but failed to load: {}", e);
+            }
+        }
+    } else {
+        eprintln!("   No index found");
+    }
+
+    Ok(())
+}
+
+fn parse_hex_flags(hex_str: &str) -> Result<u16> {
+    let cleaned = hex_str.trim_start_matches("0x");
+    u16::from_str_radix(cleaned, 16).map_err(|_| anyhow!("Invalid hex format: {}", hex_str))
+}
+
+fn format_timestamp(timestamp: u64) -> String {
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    let system_time = UNIX_EPOCH + Duration::from_secs(timestamp);
+    match system_time.duration_since(SystemTime::now()) {
+        Ok(future) => format!("in {:.1}h", future.as_secs_f64() / 3600.0),
+        Err(past) => {
+            let duration = past.duration();
+            if duration.as_secs() < 60 {
+                format!("{:.0}s ago", duration.as_secs_f64())
+            } else if duration.as_secs() < 3600 {
+                format!("{:.1}m ago", duration.as_secs_f64() / 60.0)
+            } else if duration.as_secs() < 86400 {
+                format!("{:.1}h ago", duration.as_secs_f64() / 3600.0)
+            } else {
+                format!("{:.1}d ago", duration.as_secs_f64() / 86400.0)
+            }
+        }
+    }
+}
+
+fn cmd_fast_count(
+    input: PathBuf,
+    required: Option<String>,
+    forbidden: Option<String>,
+    unmapped: bool,
+    mapped: bool,
+    first_in_pair: bool,
+    second_in_pair: bool,
+    duplicates: bool,
+    non_duplicates: bool,
+    dual_direction: bool,
+    mt_decomp: bool,
+    simple_parallel: bool,
+    thread_pool: bool,
+) -> Result<()> {
+    let input_str = input.to_str().ok_or_else(|| anyhow!("Invalid file path"))?;
+
+    // Parse flags same way as cmd_query
+    let mut required_flags = 0u16;
+    let mut forbidden_flags = 0u16;
+
+    // Parse hex flags if provided
+    if let Some(req_str) = &required {
+        required_flags |= parse_hex_flags(req_str)?;
+    }
+    if let Some(forb_str) = &forbidden {
+        forbidden_flags |= parse_hex_flags(forb_str)?;
+    }
+
+    // Apply convenience flags
+    if unmapped {
+        required_flags |= 0x4; // UNMAPPED
+    }
+    if mapped {
+        forbidden_flags |= 0x4; // NOT UNMAPPED
+    }
+    if first_in_pair {
+        required_flags |= 0x40; // FIRST_IN_PAIR
+    }
+    if second_in_pair {
+        required_flags |= 0x80; // SECOND_IN_PAIR
+    }
+    if duplicates {
+        required_flags |= 0x400; // DUPLICATE
+    }
+    if non_duplicates {
+        forbidden_flags |= 0x400; // NOT DUPLICATE
+    }
+
+    if simple_parallel {
+        eprintln!("Fast count mode - SIMPLE PARALLEL (Rayon-based)");
+    } else if thread_pool {
+        eprintln!("Fast count mode - THREAD POOL (chunked)");
+    } else if mt_decomp {
+        eprintln!("Fast count mode - MULTI-THREADED DECOMPRESSION (experimental)");
+    } else if dual_direction {
+        eprintln!("Fast count mode - DUAL DIRECTION SCAN (experimental)");
+    } else {
+        eprintln!("Fast count mode (no index building)");
+    }
+    eprintln!("   File: {}", input_str);
+    eprintln!("   Required flags: 0x{:x}", required_flags);
+    eprintln!("   Forbidden flags: 0x{:x}", forbidden_flags);
+
+    // Use appropriate scan mode
+    let start = std::time::Instant::now();
+    let count = if simple_parallel {
+        bafiq::benchmark::count_flags_simple_parallel_decompression(
+            input_str,
+            required_flags,
+            forbidden_flags,
+        )?
+    } else if thread_pool {
+        bafiq::benchmark::count_flags_libdeflate_thread_pool(
+            input_str,
+            required_flags,
+            forbidden_flags,
+        )?
+    } else if mt_decomp {
+        bafiq::benchmark::count_flags_multithreaded_decompression(
+            input_str,
+            required_flags,
+            forbidden_flags,
+        )?
+    } else {
+        let builder = IndexBuilder::new();
+        if dual_direction {
+            builder.scan_count_dual_direction(input_str, required_flags, forbidden_flags)?
+        } else {
+            builder.scan_count(input_str, required_flags, forbidden_flags)?
+        }
+    };
+    let scan_time = start.elapsed();
+
+    println!("{}", count);
+    eprintln!("Scan completed in {:.3}s", scan_time.as_secs_f64());
+
+    Ok(())
+}
+
