@@ -43,9 +43,7 @@ fn clear_file_system_cache() -> Result<()> {
         if let Ok(result) = output {
             if !result.status.success() {
                 if env::var("BAFIQ_BENCH_DEBUG").is_ok() {
-                    eprintln!(
-                        "Warning: Could not clear Linux page cache (try running with sudo)"
-                    );
+                    eprintln!("Warning: Could not clear Linux page cache (try running with sudo)");
                 }
             }
         }
@@ -77,10 +75,9 @@ fn run_samtools_count(input_file: &str) -> Result<u64> {
 
     // Parse the record count from samtools output
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let total_records = stdout
-        .trim()
-        .parse::<u64>()
-        .map_err(|e| anyhow::anyhow!("Failed to parse samtools output '{}': {}", stdout.trim(), e))?;
+    let total_records = stdout.trim().parse::<u64>().map_err(|e| {
+        anyhow::anyhow!("Failed to parse samtools output '{}': {}", stdout.trim(), e)
+    })?;
 
     Ok(total_records)
 }
@@ -274,11 +271,6 @@ fn simple_benchmarks() -> Result<()> {
             FlagIndex::from_path(path)
         })?;
 
-    let (sequential_duration, sequential_index) =
-        run_simple_benchmark_with_index("sequential_low_level", &test_bam, |path| {
-            benchmark::build_flag_index_low_level(path)
-        })?;
-
     let (parallel_duration, parallel_index) =
         run_simple_benchmark_with_index("parallel_low_level", &test_bam, |path| {
             benchmark::build_flag_index_parallel(path)
@@ -291,15 +283,43 @@ fn simple_benchmarks() -> Result<()> {
 
     let (chunk_streaming_duration, chunk_streaming_index) =
         run_simple_benchmark_with_index("chunk_streaming", &test_bam, |path| {
-            use bafiq::{IndexBuilder, BuildStrategy};
+            use bafiq::{BuildStrategy, IndexBuilder};
             let builder = IndexBuilder::with_strategy(BuildStrategy::ChunkStreaming);
             builder.build(path)
         })?;
 
     let (parallel_chunk_streaming_duration, parallel_chunk_streaming_index) =
         run_simple_benchmark_with_index("parallel_chunk_streaming", &test_bam, |path| {
-            use bafiq::{IndexBuilder, BuildStrategy};
+            use bafiq::{BuildStrategy, IndexBuilder};
             let builder = IndexBuilder::with_strategy(BuildStrategy::ParallelChunkStreaming);
+            builder.build(path)
+        })?;
+
+    let (optimized_duration, optimized_index) =
+        run_simple_benchmark_with_index("optimized", &test_bam, |path| {
+            use bafiq::{BuildStrategy, IndexBuilder};
+            let builder = IndexBuilder::with_strategy(BuildStrategy::Optimized);
+            builder.build(path)
+        })?;
+
+    let (rayon_optimized_duration, rayon_optimized_index) =
+        run_simple_benchmark_with_index("rayon_optimized", &test_bam, |path| {
+            use bafiq::{BuildStrategy, IndexBuilder};
+            let builder = IndexBuilder::with_strategy(BuildStrategy::RayonOptimized);
+            builder.build(path)
+        })?;
+
+    let (rayon_streaming_optimized_duration, rayon_streaming_optimized_index) =
+        run_simple_benchmark_with_index("rayon_streaming_optimized", &test_bam, |path| {
+            use bafiq::{BuildStrategy, IndexBuilder};
+            let builder = IndexBuilder::with_strategy(BuildStrategy::RayonStreamingOptimized);
+            builder.build(path)
+        })?;
+
+    let (sequential_duration, sequential_index) =
+        run_simple_benchmark_with_index("sequential", &test_bam, |path| {
+            use bafiq::{BuildStrategy, IndexBuilder};
+            let builder = IndexBuilder::with_strategy(BuildStrategy::Sequential);
             builder.build(path)
         })?;
 
@@ -311,10 +331,6 @@ fn simple_benchmarks() -> Result<()> {
     println!(
         "   rust-htslib:        {:.3}s",
         rust_htslib_duration.as_secs_f64()
-    );
-    println!(
-        "   sequential:         {:.3}s",
-        sequential_duration.as_secs_f64()
     );
     println!(
         "   parallel:           {:.3}s",
@@ -333,6 +349,22 @@ fn simple_benchmarks() -> Result<()> {
         parallel_chunk_streaming_duration.as_secs_f64()
     );
     println!(
+        "   optimized:          {:.3}s",
+        optimized_duration.as_secs_f64()
+    );
+    println!(
+        "   rayon_optimized:    {:.3}s",
+        rayon_optimized_duration.as_secs_f64()
+    );
+    println!(
+        "   rayon_streaming_optimized: {:.3}s",
+        rayon_streaming_optimized_duration.as_secs_f64()
+    );
+    println!(
+        "   sequential:         {:.3}s",
+        sequential_duration.as_secs_f64()
+    );
+    println!(
         "   samtools:           {:.3}s",
         samtools_result.0.as_secs_f64()
     );
@@ -340,28 +372,31 @@ fn simple_benchmarks() -> Result<()> {
     // Index size analysis
     println!("\n💾 Index Size Analysis:");
     let rust_htslib_size = calculate_index_size(&rust_htslib_index)?;
-    let sequential_size = calculate_index_size(&sequential_index)?;
     let parallel_size = calculate_index_size(&parallel_index)?;
     let streaming_size = calculate_index_size(&streaming_index)?;
     let chunk_streaming_size = calculate_index_size(&chunk_streaming_index)?;
     let parallel_chunk_streaming_size = calculate_index_size(&parallel_chunk_streaming_index)?;
+    let optimized_size = calculate_index_size(&optimized_index)?;
+    let rayon_optimized_size = calculate_index_size(&rayon_optimized_index)?;
+    let rayon_streaming_optimized_size = calculate_index_size(&rayon_streaming_optimized_index)?;
+    let sequential_size = calculate_index_size(&sequential_index)?;
 
     let rust_percentage = (rust_htslib_size as f64 / bam_size as f64) * 100.0;
-    let sequential_percentage = (sequential_size as f64 / bam_size as f64) * 100.0;
     let parallel_percentage = (parallel_size as f64 / bam_size as f64) * 100.0;
     let streaming_percentage = (streaming_size as f64 / bam_size as f64) * 100.0;
     let chunk_streaming_percentage = (chunk_streaming_size as f64 / bam_size as f64) * 100.0;
-    let parallel_chunk_streaming_percentage = (parallel_chunk_streaming_size as f64 / bam_size as f64) * 100.0;
+    let parallel_chunk_streaming_percentage =
+        (parallel_chunk_streaming_size as f64 / bam_size as f64) * 100.0;
+    let optimized_percentage = (optimized_size as f64 / bam_size as f64) * 100.0;
+    let rayon_optimized_percentage = (rayon_optimized_size as f64 / bam_size as f64) * 100.0;
+    let rayon_streaming_optimized_percentage =
+        (rayon_streaming_optimized_size as f64 / bam_size as f64) * 100.0;
+    let sequential_percentage = (sequential_size as f64 / bam_size as f64) * 100.0;
 
     println!(
         "   rust-htslib:        {} ({:.2}% of BAM)",
         format_size(rust_htslib_size as u64),
         rust_percentage
-    );
-    println!(
-        "   sequential:         {} ({:.2}% of BAM)",
-        format_size(sequential_size as u64),
-        sequential_percentage
     );
     println!(
         "   parallel:           {} ({:.2}% of BAM)",
@@ -383,13 +418,36 @@ fn simple_benchmarks() -> Result<()> {
         format_size(parallel_chunk_streaming_size as u64),
         parallel_chunk_streaming_percentage
     );
+    println!(
+        "   optimized:          {} ({:.2}% of BAM)",
+        format_size(optimized_size as u64),
+        optimized_percentage
+    );
+    println!(
+        "   rayon_optimized:    {} ({:.2}% of BAM)",
+        format_size(rayon_optimized_size as u64),
+        rayon_optimized_percentage
+    );
+    println!(
+        "   rayon_streaming_optimized: {} ({:.2}% of BAM)",
+        format_size(rayon_streaming_optimized_size as u64),
+        rayon_streaming_optimized_percentage
+    );
+    println!(
+        "   sequential:         {} ({:.2}% of BAM)",
+        format_size(sequential_size as u64),
+        sequential_percentage
+    );
 
     // Check if all indexes have the same size (they should, since they're functionally equivalent)
-    if rust_htslib_size == sequential_size
-        && sequential_size == parallel_size
+    if rust_htslib_size == parallel_size
         && parallel_size == streaming_size
         && streaming_size == chunk_streaming_size
         && chunk_streaming_size == parallel_chunk_streaming_size
+        && parallel_chunk_streaming_size == optimized_size
+        && optimized_size == rayon_optimized_size
+        && rayon_optimized_size == rayon_streaming_optimized_size
+        && rayon_streaming_optimized_size == sequential_size
     {
         println!("   All indexes have identical size");
     } else {
@@ -399,30 +457,45 @@ fn simple_benchmarks() -> Result<()> {
     // Comprehensive index verification
     println!("\nIndex Verification:");
     let rust_total = rust_htslib_index.total_records();
-    let sequential_total = sequential_index.total_records();
     let parallel_total = parallel_index.total_records();
     let streaming_total = streaming_index.total_records();
     let chunk_streaming_total = chunk_streaming_index.total_records();
     let parallel_chunk_streaming_total = parallel_chunk_streaming_index.total_records();
+    let optimized_total = optimized_index.total_records();
+    let rayon_optimized_total = rayon_optimized_index.total_records();
+    let rayon_streaming_optimized_total = rayon_streaming_optimized_index.total_records();
+    let sequential_total = sequential_index.total_records();
     let samtools_total = samtools_result.1;
 
-    if rust_total == sequential_total
-        && sequential_total == parallel_total
+    if rust_total == parallel_total
         && parallel_total == streaming_total
         && streaming_total == chunk_streaming_total
         && chunk_streaming_total == parallel_chunk_streaming_total
-        && parallel_chunk_streaming_total == samtools_total
+        && parallel_chunk_streaming_total == optimized_total
+        && optimized_total == rayon_optimized_total
+        && rayon_optimized_total == rayon_streaming_optimized_total
+        && rayon_streaming_optimized_total == sequential_total
+        && sequential_total == samtools_total
     {
         println!("   All record counts match: {}", rust_total);
         println!("   samtools verification: {} records", samtools_total);
     } else {
         println!("   Record count mismatch!");
         println!("      rust-htslib:              {}", rust_total);
-        println!("      sequential:               {}", sequential_total);
         println!("      parallel:                 {}", parallel_total);
         println!("      streaming:                {}", streaming_total);
         println!("      chunk_streaming:          {}", chunk_streaming_total);
-        println!("      parallel_chunk_streaming: {}", parallel_chunk_streaming_total);
+        println!(
+            "      parallel_chunk_streaming: {}",
+            parallel_chunk_streaming_total
+        );
+        println!("      optimized:                {}", optimized_total);
+        println!("      rayon_optimized:          {}", rayon_optimized_total);
+        println!(
+            "      rayon_streaming_optimized: {}",
+            rayon_streaming_optimized_total
+        );
+        println!("      sequential:               {}", sequential_total);
         println!("      samtools:                 {}", samtools_total);
         return Err(anyhow::anyhow!(
             "Index verification failed: record count mismatch"
@@ -432,11 +505,17 @@ fn simple_benchmarks() -> Result<()> {
     // Verify index contents are functionally equivalent
     let verification_passed = verify_indexes_equivalent(&[
         ("rust-htslib", &rust_htslib_index),
-        ("sequential", &sequential_index),
         ("parallel", &parallel_index),
         ("streaming", &streaming_index),
         ("chunk_streaming", &chunk_streaming_index),
         ("parallel_chunk_streaming", &parallel_chunk_streaming_index),
+        ("optimized", &optimized_index),
+        ("rayon_optimized", &rayon_optimized_index),
+        (
+            "rayon_streaming_optimized",
+            &rayon_streaming_optimized_index,
+        ),
+        ("sequential", &sequential_index),
     ])?;
 
     if verification_passed {
@@ -457,7 +536,15 @@ fn simple_benchmarks() -> Result<()> {
         println!("   Sequential vs rust-htslib: {:.2}x slower", slowdown);
     }
 
-    let best_parallel = parallel_duration.min(streaming_duration).min(chunk_streaming_duration).min(parallel_chunk_streaming_duration);
+    let best_parallel = parallel_duration
+        .min(streaming_duration)
+        .min(chunk_streaming_duration)
+        .min(parallel_chunk_streaming_duration)
+        .min(optimized_duration)
+        .min(rayon_optimized_duration)
+        .min(rayon_streaming_optimized_duration)
+        .min(sequential_duration);
+
     if best_parallel < rust_htslib_duration {
         let speedup = rust_htslib_duration.as_secs_f64() / best_parallel.as_secs_f64();
         let best_name = if parallel_duration == best_parallel {
@@ -466,8 +553,16 @@ fn simple_benchmarks() -> Result<()> {
             "streaming"
         } else if chunk_streaming_duration == best_parallel {
             "chunk_streaming"
-        } else {
+        } else if parallel_chunk_streaming_duration == best_parallel {
             "parallel_chunk_streaming"
+        } else if optimized_duration == best_parallel {
+            "optimized"
+        } else if rayon_optimized_duration == best_parallel {
+            "rayon_optimized"
+        } else if rayon_streaming_optimized_duration == best_parallel {
+            "rayon_streaming_optimized"
+        } else {
+            "sequential"
         };
         println!(
             "   Best parallel ({}) vs rust-htslib: {:.2}x faster",
@@ -492,11 +587,22 @@ fn simple_benchmarks() -> Result<()> {
             "streaming"
         } else if chunk_streaming_duration == best_parallel {
             "chunk_streaming"
-        } else {
+        } else if parallel_chunk_streaming_duration == best_parallel {
             "parallel_chunk_streaming"
+        } else if optimized_duration == best_parallel {
+            "optimized"
+        } else if rayon_optimized_duration == best_parallel {
+            "rayon_optimized"
+        } else if rayon_streaming_optimized_duration == best_parallel {
+            "rayon_streaming_optimized"
+        } else {
+            "sequential"
         };
-        println!("   Best bafiq ({}) vs samtools: {:.2}x faster", best_name, speedup);
-        
+        println!(
+            "   Best bafiq ({}) vs samtools: {:.2}x faster",
+            best_name, speedup
+        );
+
         if speedup >= 2.0 {
             println!("   🏆 EXCELLENT: Beats samtools by 2x+ target!");
         } else if speedup >= 1.5 {
@@ -645,19 +751,71 @@ fn criterion_benchmarks(c: &mut Criterion) {
 
     // Benchmark the chunk streaming approach
     benchmark_cold_start(&mut group, "chunk_streaming", &test_bam, |file_path| {
-        use bafiq::{IndexBuilder, BuildStrategy};
+        use bafiq::{BuildStrategy, IndexBuilder};
         let builder = IndexBuilder::with_strategy(BuildStrategy::ChunkStreaming);
-        let index = builder.build(file_path)
+        let index = builder
+            .build(file_path)
             .expect("Failed to build index with chunk streaming approach");
         index.total_records()
     });
 
     // Benchmark the parallel chunk streaming approach (new default)
-    benchmark_cold_start(&mut group, "parallel_chunk_streaming", &test_bam, |file_path| {
-        use bafiq::{IndexBuilder, BuildStrategy};
-        let builder = IndexBuilder::with_strategy(BuildStrategy::ParallelChunkStreaming);
-        let index = builder.build(file_path)
-            .expect("Failed to build index with parallel chunk streaming approach");
+    benchmark_cold_start(
+        &mut group,
+        "parallel_chunk_streaming",
+        &test_bam,
+        |file_path| {
+            use bafiq::{BuildStrategy, IndexBuilder};
+            let builder = IndexBuilder::with_strategy(BuildStrategy::ParallelChunkStreaming);
+            let index = builder
+                .build(file_path)
+                .expect("Failed to build index with parallel chunk streaming approach");
+            index.total_records()
+        },
+    );
+
+    // Benchmark the optimized approach (crossbeam-channel + rayon)
+    benchmark_cold_start(&mut group, "optimized", &test_bam, |file_path| {
+        use bafiq::{BuildStrategy, IndexBuilder};
+        let builder = IndexBuilder::with_strategy(BuildStrategy::Optimized);
+        let index = builder
+            .build(file_path)
+            .expect("Failed to build index with optimized approach");
+        index.total_records()
+    });
+
+    // Benchmark the Rayon-optimized approach (current default)
+    benchmark_cold_start(&mut group, "rayon_optimized", &test_bam, |file_path| {
+        use bafiq::{BuildStrategy, IndexBuilder};
+        let builder = IndexBuilder::with_strategy(BuildStrategy::RayonOptimized);
+        let index = builder
+            .build(file_path)
+            .expect("Failed to build index with Rayon-optimized approach");
+        index.total_records()
+    });
+
+    // Benchmark the new RayonStreamingOptimized approach (streaming evolution)
+    benchmark_cold_start(
+        &mut group,
+        "rayon_streaming_optimized",
+        &test_bam,
+        |file_path| {
+            use bafiq::{BuildStrategy, IndexBuilder};
+            let builder = IndexBuilder::with_strategy(BuildStrategy::RayonStreamingOptimized);
+            let index = builder
+                .build(file_path)
+                .expect("Failed to build index with RayonStreamingOptimized approach");
+            index.total_records()
+        },
+    );
+
+    // Benchmark the sequential approach (single-threaded baseline)
+    benchmark_cold_start(&mut group, "sequential", &test_bam, |file_path| {
+        use bafiq::{BuildStrategy, IndexBuilder};
+        let builder = IndexBuilder::with_strategy(BuildStrategy::Sequential);
+        let index = builder
+            .build(file_path)
+            .expect("Failed to build index with sequential approach");
         index.total_records()
     });
 
@@ -671,9 +829,12 @@ fn criterion_benchmarks(c: &mut Criterion) {
         .warm_up_time(Duration::from_millis(100));
 
     // Benchmark samtools view -c
-    benchmark_cold_start(&mut external_group, "samtools_view_c", &test_bam, |file_path| {
-        run_samtools_count(file_path).expect("Failed to run samtools view -c")
-    });
+    benchmark_cold_start(
+        &mut external_group,
+        "samtools_view_c",
+        &test_bam,
+        |file_path| run_samtools_count(file_path).expect("Failed to run samtools view -c"),
+    );
 
     external_group.finish();
 

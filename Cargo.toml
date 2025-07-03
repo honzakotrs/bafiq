@@ -1,42 +1,50 @@
 [package]
 name = "bafiq"
-description = "BAM Flag Index Query tool"
 version = "0.0.5"
 edition = "2021"
+license = "MIT"
+description = "Fast BAM flag indexing and querying"
+repository = "https://github.com/honza/bafiq"
 
 [[bin]]
 name = "bafiq"
 path = "src/main.rs"
 
 [[bin]]
-name = "bafiq-bench"
-path = "src/bin/bafiq-bench.rs"
-
-
-[[bin]]
-name = "bafiq-viewer"
+name = "viewer"
 path = "src/bin/viewer.rs"
 
-[dependencies]
-anyhow = "1.0"
-bincode = "1.3"
-clap = { version = "4.0", features = ["derive"] }
-crossbeam = "0.8"
-libdeflater = "0.14"
-memmap2 = "0.9"
-num_cpus = "1.0"
-rayon = "1.8"
-rust-htslib = "0.48"
-serde = { version = "1.0", features = ["derive"] }
-flate2 = "*"
-
-[dev-dependencies]
-criterion = { version = "0.5", features = ["html_reports", "csv_output"] }
-tempfile = "3.0"
+[[bin]]
+name = "bafiq-bench"
+path = "src/bin/bafiq-bench.rs"
 
 [[bench]]
 name = "index_build_bench"
 harness = false
 
-# [profile.release]
-# debug = true
+[dependencies]
+anyhow = "1.0"
+rust-htslib = "0.47"
+clap = { version = "4.5", features = ["derive"] }
+libdeflater = { version = "0.14", features = ["use_rust_alloc"] }
+memmap2 = "0.9"
+crossbeam = { version = "0.8", features = ["crossbeam-channel"] }
+rayon = "1.10"
+serde = { version = "1.0", features = ["derive"] }
+bincode = "1.3"
+thiserror = "1.0"
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+tempfile = "3.8"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+
+# Performance optimizations for SIMD and target-specific optimizations
+[profile.bench]
+inherits = "release"
+debug = true

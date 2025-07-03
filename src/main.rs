@@ -3,10 +3,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use rust_htslib::bam::{Format, Read as BamRead, Writer};
 use std::path::{Path, PathBuf};
 
-use bafiq::{
-    BuildStrategy, FlagIndex, IndexBuilder, IndexManager,
-    SerializableIndex,
-};
+use bafiq::{BuildStrategy, FlagIndex, IndexBuilder, IndexManager, SerializableIndex};
 
 /// CLI-friendly strategy names that map to BuildStrategy
 #[derive(Debug, Clone, ValueEnum)]
@@ -23,9 +20,18 @@ pub enum CliStrategy {
     /// Chunk-based streaming - better parallelism but higher latency due to batching
     #[value(name = "chunk-streaming")]
     ChunkStreaming,
-    /// Optimized parallel chunk streaming - combines immediate streaming with true parallelism (new default)
+    /// Optimized parallel chunk streaming - combines immediate streaming with true parallelism
     #[value(name = "parallel-chunk-streaming")]
     ParallelChunkStreaming,
+    /// High-performance strategy implementing all performance.md recommendations
+    #[value(name = "optimized")]
+    Optimized,
+    /// Rayon-based parallel processing - inspired by fast-count 2.3s performance
+    #[value(name = "rayon-optimized")]
+    RayonOptimized,
+    /// Streaming evolution of RayonOptimized - combines streaming discovery with work-stealing
+    #[value(name = "rayon-streaming-optimized")]
+    RayonStreamingOptimized,
 }
 
 impl From<CliStrategy> for BuildStrategy {
@@ -36,6 +42,9 @@ impl From<CliStrategy> for BuildStrategy {
             CliStrategy::HtsLib => BuildStrategy::HtsLib,
             CliStrategy::ChunkStreaming => BuildStrategy::ChunkStreaming,
             CliStrategy::ParallelChunkStreaming => BuildStrategy::ParallelChunkStreaming,
+            CliStrategy::Optimized => BuildStrategy::Optimized,
+            CliStrategy::RayonOptimized => BuildStrategy::RayonOptimized,
+            CliStrategy::RayonStreamingOptimized => BuildStrategy::RayonStreamingOptimized,
         }
     }
 }
@@ -118,10 +127,18 @@ pub struct IndexArgs {
     #[arg(
         long = "strategy",
         value_enum,
-        default_value = "parallel-chunk-streaming",
+        default_value = "optimized",
         help = "Index building strategy to use"
     )]
     pub strategy: CliStrategy,
+
+    /// Enable index compression (slower build, smaller files)
+    #[arg(
+        short = 'c',
+        long = "compress-index",
+        help = "Apply compression to reduce index file size"
+    )]
+    pub compress_index: bool,
 }
 
 impl SharedArgs {
@@ -397,13 +414,36 @@ fn cmd_index(args: IndexArgs) -> Result<()> {
     eprintln!("   Input: {:?}", args.input);
     eprintln!("   Output: {:?}", index_path);
 
-    // Use the IndexBuilder with selected strategy
-    let builder = IndexBuilder::with_strategy(strategy);
-    let index = builder.build(&args.input)?;
+    if args.compress_index {
+        eprintln!("   Compression: ENABLED (slower build, smaller files)");
 
-    eprintln!("Index built successfully. Saving to file...");
-    index.save_to_file(&index_path)?;
-    eprintln!("Index saved to: {:?}", index_path);
+        // Use IndexManager for compressed output
+        let index_manager = IndexManager::new();
+        let input_str = args
+            .input
+            .to_str()
+            .ok_or_else(|| anyhow!("Invalid file path"))?;
+        let serializable_index = index_manager.load_or_build(input_str, true)?; // force rebuild
+
+        // Save compressed index
+        serializable_index.save_to_file(&index_path)?;
+        let format_info = serializable_index.get_format_info();
+        eprintln!("Compressed index saved: {:?}", index_path);
+        eprintln!(
+            "   Compression ratio: {:.2}x",
+            format_info.compression_ratio
+        );
+    } else {
+        eprintln!("   Compression: DISABLED (faster build, larger files)");
+
+        // Use fast uncompressed path
+        let builder = IndexBuilder::with_strategy(strategy);
+        let index = builder.build(&args.input)?;
+
+        eprintln!("Index built successfully. Saving to file...");
+        index.save_to_file(&index_path)?;
+        eprintln!("Index saved to: {:?}", index_path);
+    }
 
     Ok(())
 }
@@ -417,6 +457,7 @@ fn cmd_count(args: SharedArgs) -> Result<()> {
         cmd_index(IndexArgs {
             input: args.input,
             strategy: CliStrategy::ParallelStreaming,
+            compress_index: false,
         })?;
     };
 
@@ -792,4 +833,3 @@ fn cmd_fast_count(
 
     Ok(())
 }
-

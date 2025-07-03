@@ -27,7 +27,7 @@ impl CompressedSequence {
     /// Decompress back to original sequence
     pub fn decompress(&self) -> Vec<i64> {
         let mut result = Vec::new();
-        
+
         for &value in &self.compressed_data {
             if value < 0 {
                 // Dictionary reference
@@ -40,7 +40,7 @@ impl CompressedSequence {
                 result.push(value);
             }
         }
-        
+
         result
     }
 
@@ -72,17 +72,30 @@ impl DictionaryCompressor {
 
     /// Build dictionary from a collection of sequences
     pub fn build_dictionary(&mut self, sequences: &[Vec<i64>]) -> Result<()> {
-        let mut subsequence_counts = HashMap::new();
+        use rayon::prelude::*;
+        use std::sync::Mutex;
 
-        // Count all subsequences of minimum length or longer
-        for sequence in sequences {
+        let subsequence_counts = Mutex::new(HashMap::new());
+
+        // Parallel count of all subsequences of minimum length or longer
+        sequences.par_iter().for_each(|sequence| {
+            let mut local_counts = HashMap::new();
+
             for length in self.min_length..=sequence.len() {
                 for start in 0..=(sequence.len() - length) {
                     let subseq = sequence[start..start + length].to_vec();
-                    *subsequence_counts.entry(subseq).or_insert(0) += 1;
+                    *local_counts.entry(subseq).or_insert(0) += 1;
                 }
             }
-        }
+
+            // Merge local counts into global counts
+            let mut global_counts = subsequence_counts.lock().unwrap();
+            for (subseq, count) in local_counts {
+                *global_counts.entry(subseq).or_insert(0) += count;
+            }
+        });
+
+        let subsequence_counts = subsequence_counts.into_inner().unwrap();
 
         // Find subsequences that appear frequently enough and are profitable
         let mut candidates: Vec<_> = subsequence_counts

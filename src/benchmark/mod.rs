@@ -4,6 +4,7 @@
 //! used for performance benchmarking and comparison. These functions are specifically
 //! designed for benchmarking different approaches to BAM file processing.
 
+use crate::index::builder::extract_flags_from_block_pooled;
 use crate::FlagIndex;
 use anyhow::{anyhow, Result};
 use libdeflater::Decompressor;
@@ -75,7 +76,25 @@ fn process_block_chunk(data: &[u8], blocks: &[BlockInfo]) -> Result<FlagIndex> {
         let block = &data[block_info.start_pos..block_info.start_pos + block_info.total_size];
         let block_offset = block_info.start_pos as i64;
 
-        extract_flags_from_block(block, &mut local_index, block_offset)?;
+        // Use thread-local buffers for efficiency
+        thread_local! {
+            static BUFFER: std::cell::RefCell<Vec<u8>> = std::cell::RefCell::new(vec![0u8; BGZF_BLOCK_MAX_SIZE]);
+            static DECOMPRESSOR: std::cell::RefCell<Decompressor> = std::cell::RefCell::new(Decompressor::new());
+        }
+
+        BUFFER.with(|buf| {
+            DECOMPRESSOR.with(|decomp| {
+                let mut buffer = buf.borrow_mut();
+                let mut decompressor = decomp.borrow_mut();
+                extract_flags_from_block_pooled(
+                    block,
+                    &mut local_index,
+                    block_offset,
+                    &mut buffer,
+                    &mut decompressor,
+                )
+            })
+        })?;
     }
 
     Ok(local_index)
@@ -143,10 +162,31 @@ pub fn build_flag_index_low_level(bam_path: &str) -> Result<FlagIndex> {
             break; // Incomplete block at the end.
         }
 
-        // Get the full BGZF block and extract flags.
+        // Get the full BGZF block and extract flags using efficient buffer reuse
         let block = &data[pos..pos + total_block_size];
         let block_offset = pos as i64; // Virtual file offset for this block
-        let count = extract_flags_from_block(block, &mut index, block_offset)?;
+
+        // Use static buffers for sequential processing (single-threaded)
+        static mut BUFFER: Option<Vec<u8>> = None;
+        static mut DECOMPRESSOR: Option<Decompressor> = None;
+
+        let count = unsafe {
+            // Initialize buffers on first use
+            if BUFFER.is_none() {
+                BUFFER = Some(vec![0u8; BGZF_BLOCK_MAX_SIZE]);
+            }
+            if DECOMPRESSOR.is_none() {
+                DECOMPRESSOR = Some(Decompressor::new());
+            }
+
+            extract_flags_from_block_pooled(
+                block,
+                &mut index,
+                block_offset,
+                BUFFER.as_mut().unwrap(),
+                DECOMPRESSOR.as_mut().unwrap(),
+            )?
+        };
         _total_records += count;
 
         pos += total_block_size;
@@ -232,7 +272,26 @@ pub fn build_flag_index_streaming_parallel(bam_path: &str) -> Result<FlagIndex> 
                     Ok((start_pos, total_size)) => {
                         let block = &data_worker[start_pos..start_pos + total_size];
                         let block_offset = start_pos as i64;
-                        extract_flags_from_block(block, &mut local_index, block_offset)?;
+
+                        // Use thread-local buffers for efficiency
+                        thread_local! {
+                            static BUFFER: std::cell::RefCell<Vec<u8>> = std::cell::RefCell::new(vec![0u8; BGZF_BLOCK_MAX_SIZE]);
+                            static DECOMPRESSOR: std::cell::RefCell<Decompressor> = std::cell::RefCell::new(Decompressor::new());
+                        }
+
+                        BUFFER.with(|buf| {
+                            DECOMPRESSOR.with(|decomp| {
+                                let mut buffer = buf.borrow_mut();
+                                let mut decompressor = decomp.borrow_mut();
+                                extract_flags_from_block_pooled(
+                                    block,
+                                    &mut local_index,
+                                    block_offset,
+                                    &mut buffer,
+                                    &mut decompressor,
+                                )
+                            })
+                        })?;
                     }
                     Err(_) => {
                         // Channel closed, no more blocks

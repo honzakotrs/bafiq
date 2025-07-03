@@ -3,8 +3,10 @@ use crate::compression::{
 };
 use crate::FlagIndex;
 use anyhow::Result;
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// Compressed flag index that implements the compression insights discovered
 ///
@@ -115,79 +117,119 @@ impl CompressionStats {
 impl CompressedFlagIndex {
     /// Create a compressed index from a regular FlagIndex using the new compression modules
     pub fn from_uncompressed(index: &FlagIndex) -> Result<Self> {
-        println!("🗜️ Compressing FlagIndex using multi-level strategy...");
+        println!("🗜️ Compressing FlagIndex using sparse + delta strategy...");
 
         // Step 1: Create sparse storage for used flag combinations
         let mut sparse_storage = SparseStorage::from_flag_index(index);
 
-        // Step 2: Collect all block sequences for dictionary analysis
-        let mut all_sequences = Vec::new();
+        // Step 2: Collect bin data for compression (no dictionary analysis needed)
         let mut bin_data_map = HashMap::new();
 
-        for bin_idx in 0..4096 {
-            if let Some(summaries) = index.bin_block_summaries(bin_idx) {
-                if !summaries.is_empty() {
-                    let blocks: Vec<i64> =
-                        summaries.iter().map(|(block_id, _)| *block_id).collect();
-                    let counts: Vec<u64> = summaries.iter().map(|(_, count)| *count).collect();
+        // Iterate over actual bins with data instead of all possible flag values
+        for (bin_idx, bin) in index.bins().iter().enumerate() {
+            if !bin.blocks.is_empty() {
+                let blocks: Vec<i64> = bin.blocks.iter().map(|(block_id, _)| *block_id).collect();
+                let counts: Vec<u64> = bin.blocks.iter().map(|(_, count)| *count).collect();
 
-                    all_sequences.push(blocks.clone());
-                    bin_data_map.insert(bin_idx as u16, (blocks, counts));
-                }
+                // Use the actual flag value from the bin, not the bin index
+                bin_data_map.insert(bin.bin, (blocks, counts));
             }
         }
 
-        // Step 3: Build dictionary from all sequences
-        let mut dictionary = DictionaryCompressor::default();
-        dictionary.build_dictionary(&all_sequences)?;
+        // Step 3: Skip dictionary building for better scalability
+        // Dictionary building has O(n²) complexity and doesn't scale well
+        // We'll rely on sparse storage + delta compression for efficiency
+        println!("   ⚡ Skipping dictionary building for better scalability...");
+        let dictionary = DictionaryCompressor::default();
 
-        // Step 4: Compress each bin's data using delta + dictionary compression
+        // Step 4: Compress each bin's data using MASSIVELY PARALLEL delta compression
         sparse_storage.ensure_data_capacity();
+
+        let total_bins = bin_data_map.len();
+        println!("   🚀 Parallelizing compression of {} bins...", total_bins);
+
+        // Progress counter for compression
+        let progress_counter = AtomicUsize::new(0);
+
+        // Process all bins in parallel
+        let compression_results: Vec<
+            Result<(u16, CompressedBinData, usize, usize, usize, usize), anyhow::Error>,
+        > = bin_data_map
+            .par_iter()
+            .map(|(&flag, (blocks, counts))| {
+                let original_size = blocks.len() * 8 + counts.len() * 8;
+
+                // Delta compress the block IDs
+                let mut delta_encoder = DeltaEncoder::new();
+                delta_encoder.encode(blocks)?;
+                let delta_bytes = delta_encoder.to_bytes();
+
+                // Skip dictionary compression for scalability
+                let dict_compressed = CompressedSequence::default();
+
+                let compressed_bin = CompressedBinData {
+                    delta_compressed_blocks: delta_bytes,
+                    dict_compressed_sequences: dict_compressed,
+                    read_counts: counts.clone(),
+                    original_block_count: blocks.len(),
+                };
+
+                let compressed_size = Self::estimate_bin_size(&compressed_bin);
+
+                // Track savings
+                let delta_size = delta_encoder.compressed_size();
+                let original_block_size = blocks.len() * 8;
+                let delta_savings = if delta_size < original_block_size {
+                    original_block_size - delta_size
+                } else {
+                    0
+                };
+
+                // No dictionary compression, so no dictionary savings
+                let dict_savings = 0;
+
+                // Progress reporting
+                let completed = progress_counter.fetch_add(1, Ordering::Relaxed) + 1;
+                if completed % 10 == 0 || completed == total_bins {
+                    println!(
+                        "   📊 Compressed {}/{} bins ({:.1}%)",
+                        completed,
+                        total_bins,
+                        (completed as f64 / total_bins as f64) * 100.0
+                    );
+                }
+
+                Ok((
+                    flag,
+                    compressed_bin,
+                    original_size,
+                    compressed_size,
+                    delta_savings,
+                    dict_savings,
+                ))
+            })
+            .collect();
+
+        // Step 5: Aggregate results and handle errors
         let mut total_original_size = 0;
         let mut total_compressed_size = 0;
-        let mut delta_savings = 0;
-        let mut dict_savings = 0;
+        let mut total_delta_savings = 0;
+        let mut total_dict_savings = 0;
 
-        for (flag, (blocks, counts)) in bin_data_map {
-            let original_size = blocks.len() * 8 + counts.len() * 8;
+        for result in compression_results {
+            let (flag, compressed_bin, original_size, compressed_size, delta_savings, dict_savings) =
+                result?;
+
             total_original_size += original_size;
-
-            // Delta compress the block IDs
-            let mut delta_encoder = DeltaEncoder::new();
-            delta_encoder.encode(&blocks)?;
-            let delta_bytes = delta_encoder.to_bytes();
-
-            // Dictionary compress the sequence
-            let dict_compressed = dictionary.compress(&blocks);
-
-            let compressed_bin = CompressedBinData {
-                delta_compressed_blocks: delta_bytes,
-                dict_compressed_sequences: dict_compressed,
-                read_counts: counts,
-                original_block_count: blocks.len(),
-            };
-
-            let compressed_size = Self::estimate_bin_size(&compressed_bin);
             total_compressed_size += compressed_size;
-
-            // Track savings
-            let delta_size = delta_encoder.compressed_size();
-            let original_block_size = blocks.len() * 8;
-            if delta_size < original_block_size {
-                delta_savings += original_block_size - delta_size;
-            }
-
-            let dict_ratio = compressed_bin.dict_compressed_sequences.compression_ratio(blocks.len());
-            if dict_ratio < 1.0 {
-                dict_savings += (original_block_size as f64 * (1.0 - dict_ratio)) as usize;
-            }
+            total_delta_savings += delta_savings;
+            total_dict_savings += dict_savings;
 
             sparse_storage.set_data(flag, compressed_bin)?;
         }
 
-        // Step 5: Create compression statistics
+        // Step 6: Create compression statistics
         let sparse_stats = sparse_storage.stats();
-        let dict_stats = dictionary.stats();
 
         let compression_stats = CompressionStats {
             original_size: total_original_size,
@@ -198,14 +240,14 @@ impl CompressedFlagIndex {
                 1.0
             },
             sparsity_savings: (4096 - sparse_stats.used_flags) * 32, // Estimated bytes per unused bin
-            delta_savings,
-            dictionary_savings: dict_savings,
-            runlength_savings: 0, // Not implemented in this version
+            delta_savings: total_delta_savings,
+            dictionary_savings: total_dict_savings, // Will be 0 since we skip dictionary
+            runlength_savings: 0,                   // Not implemented in this version
             total_flags_used: sparse_stats.used_flags,
-            total_literals: dict_stats.num_subsequences,
+            total_literals: 0, // No dictionary literals
         };
 
-        println!("   ✅ Compression complete!");
+        println!("   ✅ Parallel compression complete!");
         println!(
             "   📊 Compression ratio: {:.2}x ({:.1}% savings)",
             compression_stats.compression_ratio,

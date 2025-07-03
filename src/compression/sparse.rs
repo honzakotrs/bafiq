@@ -40,8 +40,11 @@ impl<T> SparseStorage<T> {
     }
 
     /// Ensure data vector has enough capacity
-    pub fn ensure_data_capacity(&mut self) {
-        self.data.resize_with(self.used_flags.len(), || unreachable!());
+    pub fn ensure_data_capacity(&mut self)
+    where
+        T: Default,
+    {
+        self.data.resize_with(self.used_flags.len(), T::default);
     }
 
     /// Get compression ratio (used flags / total possible flags)
@@ -61,7 +64,8 @@ impl<T> SparseStorage<T> {
 
     /// Get data for a specific flag
     pub fn get_data(&self, flag: u16) -> Option<&T> {
-        self.get_sparse_index(flag).and_then(|idx| self.data.get(idx))
+        self.get_sparse_index(flag)
+            .and_then(|idx| self.data.get(idx))
     }
 
     /// Get mutable data for a specific flag
@@ -80,8 +84,8 @@ impl<T> SparseStorage<T> {
     }
 
     /// Set data for a specific flag
-    pub fn set_data(&mut self, flag: u16, data: T) -> Result<()> 
-    where 
+    pub fn set_data(&mut self, flag: u16, data: T) -> Result<()>
+    where
         T: Default,
     {
         if let Some(idx) = self.get_sparse_index(flag) {
