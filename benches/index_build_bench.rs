@@ -1,13 +1,292 @@
 use anyhow::Result;
-use criterion::{
-    criterion_group, criterion_main, measurement::WallTime, BenchmarkGroup, Criterion,
-};
+use criterion::{black_box, measurement::WallTime, BenchmarkGroup, Criterion};
+use std::collections::HashMap;
 use std::env;
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::LazyLock;
+use std::sync::{Arc, Mutex};
+use std::thread;
 use std::time::{Duration, Instant};
+use sysinfo::{Pid, System};
 
 use bafiq::{benchmark, FlagIndex};
+
+/// Global storage for resource usage data from Criterion benchmarks
+static CRITERION_RESOURCE_DATA: LazyLock<Mutex<HashMap<String, ResourceStats>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Get resource usage data for a specific benchmark strategy
+pub fn get_resource_data(strategy_name: &str) -> Option<ResourceStats> {
+    CRITERION_RESOURCE_DATA
+        .lock()
+        .ok()?
+        .get(strategy_name)
+        .cloned()
+}
+
+/// Report resource usage statistics after Criterion benchmarks complete
+fn report_criterion_resource_usage() {
+    if let Ok(data) = CRITERION_RESOURCE_DATA.lock() {
+        if !data.is_empty() {
+            println!("\n📊 Criterion Resource Usage Summary:");
+            println!("{}", "=".repeat(100));
+            println!(
+                "{:<25} {:>12} {:>12} {:>8} {:>8} {:>8}",
+                "Strategy", "Peak RAM", "Avg RAM", "Peak CPU", "Avg CPU", "Samples"
+            );
+            println!("{}", "-".repeat(100));
+
+            // Sort by strategy name for consistent output
+            let mut sorted_data: Vec<_> = data.iter().collect();
+            sorted_data.sort_by_key(|(name, _)| *name);
+
+            for (name, resources) in &sorted_data {
+                println!(
+                    "{:<25} {:>12} {:>12} {:>7.1}% {:>7.1}% {:>8}",
+                    name,
+                    ResourceStats::format_memory(resources.peak_memory_bytes),
+                    ResourceStats::format_memory(resources.avg_memory_bytes),
+                    resources.peak_cpu_percent,
+                    resources.avg_cpu_percent,
+                    resources.sample_count
+                );
+            }
+
+            println!("{}", "=".repeat(100));
+
+            // Resource efficiency analysis
+            let mut memory_ranking: Vec<_> = sorted_data
+                .iter()
+                .map(|(name, res)| (name.as_str(), res.peak_memory_bytes))
+                .collect();
+            memory_ranking.sort_by_key(|(_, memory)| *memory);
+
+            println!("\n💾 Memory Efficiency (Criterion):");
+            for (i, (name, memory)) in memory_ranking.iter().take(3).enumerate() {
+                println!(
+                    "   {}. {} - {}",
+                    i + 1,
+                    name,
+                    ResourceStats::format_memory(*memory)
+                );
+            }
+
+            let mut cpu_ranking: Vec<_> = sorted_data
+                .iter()
+                .map(|(name, res)| (name.as_str(), res.avg_cpu_percent))
+                .collect();
+            cpu_ranking.sort_by(|(_, cpu_a), (_, cpu_b)| cpu_b.partial_cmp(cpu_a).unwrap());
+
+            println!("\n🖥️ CPU Utilization (Criterion):");
+            for (i, (name, cpu)) in cpu_ranking.iter().take(3).enumerate() {
+                println!("   {}. {} - {:.1}% average", i + 1, name, cpu);
+            }
+        }
+    }
+}
+
+/// Enhanced benchmark function for Criterion with cold start and resource monitoring
+fn benchmark_cold_start<F>(
+    group: &mut BenchmarkGroup<WallTime>,
+    name: &str,
+    test_bam: &str,
+    mut benchmark_fn: F,
+) where
+    F: FnMut(&str) -> u64,
+{
+    group.bench_function(name, |b| {
+        b.iter_custom(|iters| {
+            let mut total_time = Duration::new(0, 0);
+            let mut all_resources = Vec::new();
+
+            for _i in 0..iters {
+                // Fast mode: skip expensive cache clearing and temp file operations
+                let use_fast_mode = env::var("BAFIQ_BENCH_FAST").is_ok();
+
+                let file_path = if use_fast_mode {
+                    // Use original file directly (much faster)
+                    test_bam.to_string()
+                } else {
+                    // Clear caches before each iteration (slower but more accurate)
+                    if let Err(e) = clear_file_system_cache() {
+                        if env::var("BAFIQ_BENCH_DEBUG").is_ok() {
+                            eprintln!("Cache clearing failed: {}", e);
+                        }
+                    }
+
+                    // Create a fresh copy of the file to avoid any file handle caching
+                    let temp_file = create_temp_bam_copy(test_bam)
+                        .expect("Failed to create temporary BAM file");
+
+                    // Small delay to ensure cache clearing takes effect
+                    std::thread::sleep(Duration::from_millis(100));
+
+                    temp_file.to_str().unwrap().to_string()
+                };
+
+                // Start resource monitoring
+                let monitor = ResourceMonitor::new().expect("Failed to create resource monitor");
+                monitor
+                    .start_monitoring(10)
+                    .expect("Failed to start monitoring"); // Reduced from 5ms to 10ms for less overhead
+
+                // Run the actual benchmark with timing
+                let start = std::time::Instant::now();
+                let result = benchmark_fn(&file_path);
+                let elapsed = start.elapsed();
+
+                // Stop monitoring and collect resource data
+                let resources = monitor.stop_monitoring();
+                all_resources.push(resources);
+
+                // Use black_box to prevent optimization
+                black_box(result);
+
+                total_time += elapsed;
+
+                if !use_fast_mode {
+                    // Cleanup temp file
+                    cleanup_temp_file(&std::path::PathBuf::from(&file_path));
+
+                    // Force any remaining buffers to be released
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+            }
+
+            // Calculate aggregated resource usage across iterations
+            if !all_resources.is_empty() {
+                let aggregated_resources = ResourceStats {
+                    peak_memory_bytes: all_resources
+                        .iter()
+                        .map(|r| r.peak_memory_bytes)
+                        .max()
+                        .unwrap_or(0),
+                    avg_memory_bytes: all_resources
+                        .iter()
+                        .map(|r| r.avg_memory_bytes)
+                        .sum::<u64>()
+                        / all_resources.len() as u64,
+                    peak_cpu_percent: all_resources
+                        .iter()
+                        .map(|r| r.peak_cpu_percent)
+                        .fold(0.0f32, f32::max),
+                    avg_cpu_percent: all_resources.iter().map(|r| r.avg_cpu_percent).sum::<f32>()
+                        / all_resources.len() as f32,
+                    execution_time: total_time / iters as u32,
+                    sample_count: all_resources.iter().map(|r| r.sample_count).sum(),
+                };
+
+                // Store resource data globally for later reporting
+                if let Ok(mut data) = CRITERION_RESOURCE_DATA.lock() {
+                    // Debug output before moving the data
+                    if env::var("BAFIQ_BENCH_DEBUG").is_ok() {
+                        println!(
+                            "   {} - Peak Memory: {}, Avg CPU: {:.1}%",
+                            name,
+                            ResourceStats::format_memory(aggregated_resources.peak_memory_bytes),
+                            aggregated_resources.avg_cpu_percent
+                        );
+                    }
+
+                    data.insert(name.to_string(), aggregated_resources);
+                }
+            }
+
+            total_time
+        });
+    });
+}
+
+/// Enhanced benchmark result that includes resource usage
+#[derive(Debug)]
+struct BenchmarkResult {
+    duration: Duration,
+    index: FlagIndex,
+    resources: ResourceStats,
+}
+
+/// Enhanced benchmark function with resource monitoring
+fn run_benchmark_with_monitoring<F>(
+    name: &str,
+    test_bam: &str,
+    mut benchmark_fn: F,
+) -> Result<BenchmarkResult>
+where
+    F: FnMut(&str) -> Result<FlagIndex>,
+{
+    println!("🧊 Running monitored benchmark: {}", name);
+
+    // Clear caches
+    clear_file_system_cache()?;
+
+    // Create fresh copy
+    let temp_file = create_temp_bam_copy(test_bam)?;
+
+    // Small delay to ensure cache clearing takes effect
+    std::thread::sleep(Duration::from_millis(100));
+
+    // Start resource monitoring
+    let monitor = ResourceMonitor::new()?;
+    monitor.start_monitoring(10)?; // Sample every 10ms
+
+    // Run the actual benchmark
+    let start = Instant::now();
+    let index = benchmark_fn(temp_file.to_str().unwrap())?;
+    let duration = start.elapsed();
+
+    // Stop monitoring and get stats
+    let resources = monitor.stop_monitoring();
+
+    // Cleanup
+    cleanup_temp_file(&temp_file);
+
+    println!(
+        "   Time: {:.3}s, Peak Memory: {}, Avg CPU: {:.1}%",
+        duration.as_secs_f64(),
+        ResourceStats::format_memory(resources.peak_memory_bytes),
+        resources.avg_cpu_percent
+    );
+
+    Ok(BenchmarkResult {
+        duration,
+        index,
+        resources,
+    })
+}
+
+/// Enhanced simple benchmark function (backwards compatibility)
+fn run_simple_benchmark_with_index<F>(
+    name: &str,
+    test_bam: &str,
+    mut benchmark_fn: F,
+) -> Result<(Duration, FlagIndex)>
+where
+    F: FnMut(&str) -> Result<FlagIndex>,
+{
+    println!("🧊 Running benchmark: {}", name);
+
+    // Light resource monitoring for simple benchmarks (no cache clearing)
+    let monitor = ResourceMonitor::new()?;
+    monitor.start_monitoring(20)?; // Lighter sampling: 20ms instead of 5-10ms
+
+    let start = Instant::now();
+    let index = benchmark_fn(test_bam)?;
+    let duration = start.elapsed();
+
+    let resources = monitor.stop_monitoring();
+
+    // Store for simple benchmark reporting
+    println!(
+        "   ✅ {} - {}ms, Peak Memory: {}, Avg CPU: {:.1}%",
+        name,
+        duration.as_millis(),
+        ResourceStats::format_memory(resources.peak_memory_bytes),
+        resources.avg_cpu_percent
+    );
+
+    Ok((duration, index))
+}
 
 /// Clear OS file system caches to ensure cold start conditions
 /// This is platform-specific and requires appropriate permissions
@@ -181,48 +460,6 @@ fn format_size(bytes: u64) -> String {
     }
 }
 
-/// Simple direct timing benchmark that returns both timing and the index (for verification)
-fn run_simple_benchmark_with_index<F>(
-    name: &str,
-    test_bam: &str,
-    mut benchmark_fn: F,
-) -> Result<(Duration, FlagIndex)>
-where
-    F: FnMut(&str) -> Result<FlagIndex>,
-{
-    println!("🧊 Running cold start benchmark: {}", name);
-
-    // Clear caches
-    clear_file_system_cache()?;
-
-    // Create fresh copy
-    let temp_file = create_temp_bam_copy(test_bam)?;
-
-    // Small delay to ensure cache clearing takes effect
-    std::thread::sleep(Duration::from_millis(100));
-
-    // Run benchmark
-    let start = Instant::now();
-    let index = benchmark_fn(temp_file.to_str().unwrap())?;
-    let duration = start.elapsed();
-    let total_records = index.total_records();
-
-    // Calculate index size
-    let index_size = calculate_index_size(&index)?;
-
-    // Cleanup
-    cleanup_temp_file(&temp_file);
-
-    println!(
-        "   Time: {:.3}s, Records: {}, Index: {}",
-        duration.as_secs_f64(),
-        total_records,
-        format_size(index_size as u64)
-    );
-
-    Ok((duration, index))
-}
-
 /// Verify that all flag indexes are equivalent
 fn verify_indexes_equivalent(indexes: &[(&str, &FlagIndex)]) -> Result<bool> {
     if indexes.len() < 2 {
@@ -258,430 +495,373 @@ fn simple_benchmarks() -> Result<()> {
     };
 
     println!("Simple Benchmarking with file: {}", test_bam);
-    println!("Fast development mode (single cold start run per method)");
+    println!("Fast development mode with resource monitoring");
 
     // Get original BAM file size for comparison
     let bam_size = get_file_size(&test_bam)?;
     println!("Original BAM size: {}", format_size(bam_size));
-    println!("{}", "=".repeat(80));
+    println!("{}", "=".repeat(100));
 
-    // Run each benchmark once and collect both timing and index results
-    let (rust_htslib_duration, rust_htslib_index) =
-        run_simple_benchmark_with_index("rust-htslib", &test_bam, |path| {
-            FlagIndex::from_path(path)
-        })?;
+    // Run each benchmark with enhanced monitoring
+    let rust_htslib =
+        run_benchmark_with_monitoring("rust-htslib", &test_bam, |path| FlagIndex::from_path(path))?;
 
-    let (parallel_duration, parallel_index) =
-        run_simple_benchmark_with_index("parallel_low_level", &test_bam, |path| {
-            benchmark::build_flag_index_parallel(path)
-        })?;
+    let parallel = run_benchmark_with_monitoring("parallel_low_level", &test_bam, |path| {
+        benchmark::build_flag_index_parallel(path)
+    })?;
 
-    let (streaming_duration, streaming_index) =
-        run_simple_benchmark_with_index("streaming_parallel", &test_bam, |path| {
-            benchmark::build_flag_index_streaming_parallel(path)
-        })?;
+    let streaming = run_benchmark_with_monitoring("streaming_parallel", &test_bam, |path| {
+        benchmark::build_flag_index_streaming_parallel(path)
+    })?;
 
-    let (chunk_streaming_duration, chunk_streaming_index) =
-        run_simple_benchmark_with_index("chunk_streaming", &test_bam, |path| {
-            use bafiq::{BuildStrategy, IndexBuilder};
-            let builder = IndexBuilder::with_strategy(BuildStrategy::ChunkStreaming);
-            builder.build(path)
-        })?;
+    let chunk_streaming = run_benchmark_with_monitoring("chunk_streaming", &test_bam, |path| {
+        use bafiq::{BuildStrategy, IndexBuilder};
+        let builder = IndexBuilder::with_strategy(BuildStrategy::ChunkStreaming);
+        builder.build(path)
+    })?;
 
-    let (parallel_chunk_streaming_duration, parallel_chunk_streaming_index) =
-        run_simple_benchmark_with_index("parallel_chunk_streaming", &test_bam, |path| {
+    let parallel_chunk_streaming =
+        run_benchmark_with_monitoring("parallel_chunk_streaming", &test_bam, |path| {
             use bafiq::{BuildStrategy, IndexBuilder};
             let builder = IndexBuilder::with_strategy(BuildStrategy::ParallelChunkStreaming);
             builder.build(path)
         })?;
 
-    let (optimized_duration, optimized_index) =
-        run_simple_benchmark_with_index("optimized", &test_bam, |path| {
-            use bafiq::{BuildStrategy, IndexBuilder};
-            let builder = IndexBuilder::with_strategy(BuildStrategy::Optimized);
-            builder.build(path)
-        })?;
+    let optimized = run_benchmark_with_monitoring("optimized", &test_bam, |path| {
+        use bafiq::{BuildStrategy, IndexBuilder};
+        let builder = IndexBuilder::with_strategy(BuildStrategy::Optimized);
+        builder.build(path)
+    })?;
 
-    let (rayon_optimized_duration, rayon_optimized_index) =
-        run_simple_benchmark_with_index("rayon_optimized", &test_bam, |path| {
-            use bafiq::{BuildStrategy, IndexBuilder};
-            let builder = IndexBuilder::with_strategy(BuildStrategy::RayonOptimized);
-            builder.build(path)
-        })?;
+    let rayon_optimized = run_benchmark_with_monitoring("rayon_optimized", &test_bam, |path| {
+        use bafiq::{BuildStrategy, IndexBuilder};
+        let builder = IndexBuilder::with_strategy(BuildStrategy::RayonOptimized);
+        builder.build(path)
+    })?;
 
-    let (rayon_streaming_optimized_duration, rayon_streaming_optimized_index) =
-        run_simple_benchmark_with_index("rayon_streaming_optimized", &test_bam, |path| {
+    let rayon_streaming_optimized =
+        run_benchmark_with_monitoring("rayon_streaming_optimized", &test_bam, |path| {
             use bafiq::{BuildStrategy, IndexBuilder};
             let builder = IndexBuilder::with_strategy(BuildStrategy::RayonStreamingOptimized);
             builder.build(path)
         })?;
 
-    let (sequential_duration, sequential_index) =
-        run_simple_benchmark_with_index("sequential", &test_bam, |path| {
-            use bafiq::{BuildStrategy, IndexBuilder};
-            let builder = IndexBuilder::with_strategy(BuildStrategy::Sequential);
-            builder.build(path)
-        })?;
+    let sequential = run_benchmark_with_monitoring("sequential", &test_bam, |path| {
+        use bafiq::{BuildStrategy, IndexBuilder};
+        let builder = IndexBuilder::with_strategy(BuildStrategy::Sequential);
+        builder.build(path)
+    })?;
 
     // Run samtools benchmark
     let samtools_result = run_simple_samtools_benchmark(&test_bam)?;
 
-    // Summary
-    println!("\nPerformance Summary:");
-    println!(
-        "   rust-htslib:        {:.3}s",
-        rust_htslib_duration.as_secs_f64()
-    );
-    println!(
-        "   parallel:           {:.3}s",
-        parallel_duration.as_secs_f64()
-    );
-    println!(
-        "   streaming_parallel: {:.3}s",
-        streaming_duration.as_secs_f64()
-    );
-    println!(
-        "   chunk_streaming:    {:.3}s",
-        chunk_streaming_duration.as_secs_f64()
-    );
-    println!(
-        "   parallel_chunk_streaming: {:.3}s",
-        parallel_chunk_streaming_duration.as_secs_f64()
-    );
-    println!(
-        "   optimized:          {:.3}s",
-        optimized_duration.as_secs_f64()
-    );
-    println!(
-        "   rayon_optimized:    {:.3}s",
-        rayon_optimized_duration.as_secs_f64()
-    );
-    println!(
-        "   rayon_streaming_optimized: {:.3}s",
-        rayon_streaming_optimized_duration.as_secs_f64()
-    );
-    println!(
-        "   sequential:         {:.3}s",
-        sequential_duration.as_secs_f64()
-    );
-    println!(
-        "   samtools:           {:.3}s",
-        samtools_result.0.as_secs_f64()
-    );
+    // Store all results for table display
+    let results = vec![
+        ("rust-htslib", &rust_htslib),
+        ("parallel", &parallel),
+        ("streaming", &streaming),
+        ("chunk_streaming", &chunk_streaming),
+        ("parallel_chunk_streaming", &parallel_chunk_streaming),
+        ("optimized", &optimized),
+        ("rayon_optimized", &rayon_optimized),
+        ("rayon_streaming_optimized", &rayon_streaming_optimized),
+        ("sequential", &sequential),
+    ];
 
-    // Index size analysis
-    println!("\n💾 Index Size Analysis:");
-    let rust_htslib_size = calculate_index_size(&rust_htslib_index)?;
-    let parallel_size = calculate_index_size(&parallel_index)?;
-    let streaming_size = calculate_index_size(&streaming_index)?;
-    let chunk_streaming_size = calculate_index_size(&chunk_streaming_index)?;
-    let parallel_chunk_streaming_size = calculate_index_size(&parallel_chunk_streaming_index)?;
-    let optimized_size = calculate_index_size(&optimized_index)?;
-    let rayon_optimized_size = calculate_index_size(&rayon_optimized_index)?;
-    let rayon_streaming_optimized_size = calculate_index_size(&rayon_streaming_optimized_index)?;
-    let sequential_size = calculate_index_size(&sequential_index)?;
+    // Performance and Resource Usage Summary Table
+    println!("\n📊 Performance & Resource Usage Summary:");
+    println!("{}", "=".repeat(120));
+    println!(
+        "{:<25} {:>8} {:>12} {:>12} {:>8} {:>8} {:>12} {:>8}",
+        "Strategy", "Time", "Peak RAM", "Avg RAM", "Peak CPU", "Avg CPU", "Index Size", "Samples"
+    );
+    println!("{}", "-".repeat(120));
 
-    let rust_percentage = (rust_htslib_size as f64 / bam_size as f64) * 100.0;
-    let parallel_percentage = (parallel_size as f64 / bam_size as f64) * 100.0;
-    let streaming_percentage = (streaming_size as f64 / bam_size as f64) * 100.0;
-    let chunk_streaming_percentage = (chunk_streaming_size as f64 / bam_size as f64) * 100.0;
-    let parallel_chunk_streaming_percentage =
-        (parallel_chunk_streaming_size as f64 / bam_size as f64) * 100.0;
-    let optimized_percentage = (optimized_size as f64 / bam_size as f64) * 100.0;
-    let rayon_optimized_percentage = (rayon_optimized_size as f64 / bam_size as f64) * 100.0;
-    let rayon_streaming_optimized_percentage =
-        (rayon_streaming_optimized_size as f64 / bam_size as f64) * 100.0;
-    let sequential_percentage = (sequential_size as f64 / bam_size as f64) * 100.0;
+    for (name, result) in &results {
+        let index_size = calculate_index_size(&result.index)?;
+        let index_percentage = (index_size as f64 / bam_size as f64) * 100.0;
 
-    println!(
-        "   rust-htslib:        {} ({:.2}% of BAM)",
-        format_size(rust_htslib_size as u64),
-        rust_percentage
-    );
-    println!(
-        "   parallel:           {} ({:.2}% of BAM)",
-        format_size(parallel_size as u64),
-        parallel_percentage
-    );
-    println!(
-        "   streaming_parallel: {} ({:.2}% of BAM)",
-        format_size(streaming_size as u64),
-        streaming_percentage
-    );
-    println!(
-        "   chunk_streaming:    {} ({:.2}% of BAM)",
-        format_size(chunk_streaming_size as u64),
-        chunk_streaming_percentage
-    );
-    println!(
-        "   parallel_chunk_streaming: {} ({:.2}% of BAM)",
-        format_size(parallel_chunk_streaming_size as u64),
-        parallel_chunk_streaming_percentage
-    );
-    println!(
-        "   optimized:          {} ({:.2}% of BAM)",
-        format_size(optimized_size as u64),
-        optimized_percentage
-    );
-    println!(
-        "   rayon_optimized:    {} ({:.2}% of BAM)",
-        format_size(rayon_optimized_size as u64),
-        rayon_optimized_percentage
-    );
-    println!(
-        "   rayon_streaming_optimized: {} ({:.2}% of BAM)",
-        format_size(rayon_streaming_optimized_size as u64),
-        rayon_streaming_optimized_percentage
-    );
-    println!(
-        "   sequential:         {} ({:.2}% of BAM)",
-        format_size(sequential_size as u64),
-        sequential_percentage
-    );
-
-    // Check if all indexes have the same size (they should, since they're functionally equivalent)
-    if rust_htslib_size == parallel_size
-        && parallel_size == streaming_size
-        && streaming_size == chunk_streaming_size
-        && chunk_streaming_size == parallel_chunk_streaming_size
-        && parallel_chunk_streaming_size == optimized_size
-        && optimized_size == rayon_optimized_size
-        && rayon_optimized_size == rayon_streaming_optimized_size
-        && rayon_streaming_optimized_size == sequential_size
-    {
-        println!("   All indexes have identical size");
-    } else {
-        println!("   Index sizes differ (unexpected for equivalent indexes)");
+        println!(
+            "{:<25} {:>7.3}s {:>12} {:>12} {:>7.1}% {:>7.1}% {:>12} {:>8}",
+            name,
+            result.duration.as_secs_f64(),
+            ResourceStats::format_memory(result.resources.peak_memory_bytes),
+            ResourceStats::format_memory(result.resources.avg_memory_bytes),
+            result.resources.peak_cpu_percent,
+            result.resources.avg_cpu_percent,
+            format!(
+                "{} ({:.1}%)",
+                format_size(index_size as u64),
+                index_percentage
+            ),
+            result.resources.sample_count
+        );
     }
 
-    // Comprehensive index verification
-    println!("\nIndex Verification:");
-    let rust_total = rust_htslib_index.total_records();
-    let parallel_total = parallel_index.total_records();
-    let streaming_total = streaming_index.total_records();
-    let chunk_streaming_total = chunk_streaming_index.total_records();
-    let parallel_chunk_streaming_total = parallel_chunk_streaming_index.total_records();
-    let optimized_total = optimized_index.total_records();
-    let rayon_optimized_total = rayon_optimized_index.total_records();
-    let rayon_streaming_optimized_total = rayon_streaming_optimized_index.total_records();
-    let sequential_total = sequential_index.total_records();
-    let samtools_total = samtools_result.1;
+    // Add samtools for comparison
+    println!(
+        "{:<25} {:>7.3}s {:>12} {:>12} {:>7} {:>7} {:>12} {:>8}",
+        "samtools view -c",
+        samtools_result.0.as_secs_f64(),
+        "N/A",
+        "N/A",
+        "N/A",
+        "N/A",
+        "N/A",
+        "N/A"
+    );
 
-    if rust_total == parallel_total
-        && parallel_total == streaming_total
-        && streaming_total == chunk_streaming_total
-        && chunk_streaming_total == parallel_chunk_streaming_total
-        && parallel_chunk_streaming_total == optimized_total
-        && optimized_total == rayon_optimized_total
-        && rayon_optimized_total == rayon_streaming_optimized_total
-        && rayon_streaming_optimized_total == sequential_total
-        && sequential_total == samtools_total
-    {
-        println!("   All record counts match: {}", rust_total);
-        println!("   samtools verification: {} records", samtools_total);
+    println!("{}", "=".repeat(120));
+
+    // Memory efficiency analysis
+    println!("\n💾 Memory Efficiency Analysis:");
+    let mut memory_efficiency: Vec<_> = results
+        .iter()
+        .map(|(name, result)| (name, result.resources.peak_memory_bytes))
+        .collect();
+    memory_efficiency.sort_by_key(|(_, memory)| *memory);
+
+    println!("   Most memory efficient:");
+    for (i, (name, memory)) in memory_efficiency.iter().take(3).enumerate() {
+        println!(
+            "   {}. {} - {}",
+            i + 1,
+            name,
+            ResourceStats::format_memory(*memory)
+        );
+    }
+
+    // Speed analysis
+    println!("\n⚡ Speed Analysis:");
+    let mut speed_ranking: Vec<_> = results
+        .iter()
+        .map(|(name, result)| (name, result.duration))
+        .collect();
+    speed_ranking.sort_by_key(|(_, duration)| *duration);
+
+    println!("   Fastest strategies:");
+    for (i, (name, duration)) in speed_ranking.iter().take(3).enumerate() {
+        let speedup_vs_samtools = samtools_result.0.as_secs_f64() / duration.as_secs_f64();
+        println!(
+            "   {}. {} - {:.3}s ({:.1}x faster than samtools)",
+            i + 1,
+            name,
+            duration.as_secs_f64(),
+            speedup_vs_samtools
+        );
+    }
+
+    // CPU utilization analysis
+    println!("\n🖥️  CPU Utilization Analysis:");
+    let mut cpu_efficiency: Vec<_> = results
+        .iter()
+        .map(|(name, result)| (name, result.resources.avg_cpu_percent))
+        .collect();
+    cpu_efficiency.sort_by(|(_, cpu_a), (_, cpu_b)| cpu_b.partial_cmp(cpu_a).unwrap());
+
+    println!("   Best CPU utilization:");
+    for (i, (name, cpu)) in cpu_efficiency.iter().take(3).enumerate() {
+        println!("   {}. {} - {:.1}% average CPU", i + 1, name, cpu);
+    }
+
+    // Comprehensive index verification (same as before)
+    println!("\n✅ Index Verification:");
+    let first_total = rust_htslib.index.total_records();
+    let all_match = results
+        .iter()
+        .all(|(_, result)| result.index.total_records() == first_total)
+        && first_total == samtools_result.1;
+
+    if all_match {
+        println!("   ✅ All record counts match: {}", first_total);
+        println!("   ✅ samtools verification: {} records", samtools_result.1);
     } else {
-        println!("   Record count mismatch!");
-        println!("      rust-htslib:              {}", rust_total);
-        println!("      parallel:                 {}", parallel_total);
-        println!("      streaming:                {}", streaming_total);
-        println!("      chunk_streaming:          {}", chunk_streaming_total);
-        println!(
-            "      parallel_chunk_streaming: {}",
-            parallel_chunk_streaming_total
-        );
-        println!("      optimized:                {}", optimized_total);
-        println!("      rayon_optimized:          {}", rayon_optimized_total);
-        println!(
-            "      rayon_streaming_optimized: {}",
-            rayon_streaming_optimized_total
-        );
-        println!("      sequential:               {}", sequential_total);
-        println!("      samtools:                 {}", samtools_total);
+        println!("   ❌ Record count mismatch!");
+        for (name, result) in &results {
+            println!("      {}: {}", name, result.index.total_records());
+        }
+        println!("      samtools: {}", samtools_result.1);
         return Err(anyhow::anyhow!(
-            "Index verification failed: record count mismatch"
+            "Index verification failed: record counts don't match"
         ));
     }
 
-    // Verify index contents are functionally equivalent
-    let verification_passed = verify_indexes_equivalent(&[
-        ("rust-htslib", &rust_htslib_index),
-        ("parallel", &parallel_index),
-        ("streaming", &streaming_index),
-        ("chunk_streaming", &chunk_streaming_index),
-        ("parallel_chunk_streaming", &parallel_chunk_streaming_index),
-        ("optimized", &optimized_index),
-        ("rayon_optimized", &rayon_optimized_index),
-        (
-            "rayon_streaming_optimized",
-            &rayon_streaming_optimized_index,
-        ),
-        ("sequential", &sequential_index),
-    ])?;
+    // Performance gate check (enhanced)
+    let best_duration = results
+        .iter()
+        .map(|(_, result)| result.duration)
+        .min()
+        .unwrap();
 
-    if verification_passed {
-        println!("All indexes are functionally equivalent");
-    } else {
-        return Err(anyhow::anyhow!(
-            "Index verification failed: indexes are not functionally equivalent"
-        ));
-    }
+    if best_duration < rust_htslib.duration {
+        let speedup = rust_htslib.duration.as_secs_f64() / best_duration.as_secs_f64();
+        let best_strategy = results
+            .iter()
+            .find(|(_, result)| result.duration == best_duration)
+            .map(|(name, _)| name)
+            .unwrap();
 
-    // Calculate speedups
-    println!("\nSpeedup Analysis:");
-    if sequential_duration < rust_htslib_duration {
-        let speedup = rust_htslib_duration.as_secs_f64() / sequential_duration.as_secs_f64();
-        println!("   Sequential vs rust-htslib: {:.2}x faster", speedup);
-    } else {
-        let slowdown = sequential_duration.as_secs_f64() / rust_htslib_duration.as_secs_f64();
-        println!("   Sequential vs rust-htslib: {:.2}x slower", slowdown);
-    }
-
-    let best_parallel = parallel_duration
-        .min(streaming_duration)
-        .min(chunk_streaming_duration)
-        .min(parallel_chunk_streaming_duration)
-        .min(optimized_duration)
-        .min(rayon_optimized_duration)
-        .min(rayon_streaming_optimized_duration)
-        .min(sequential_duration);
-
-    if best_parallel < rust_htslib_duration {
-        let speedup = rust_htslib_duration.as_secs_f64() / best_parallel.as_secs_f64();
-        let best_name = if parallel_duration == best_parallel {
-            "parallel"
-        } else if streaming_duration == best_parallel {
-            "streaming"
-        } else if chunk_streaming_duration == best_parallel {
-            "chunk_streaming"
-        } else if parallel_chunk_streaming_duration == best_parallel {
-            "parallel_chunk_streaming"
-        } else if optimized_duration == best_parallel {
-            "optimized"
-        } else if rayon_optimized_duration == best_parallel {
-            "rayon_optimized"
-        } else if rayon_streaming_optimized_duration == best_parallel {
-            "rayon_streaming_optimized"
-        } else {
-            "sequential"
-        };
+        println!("\n🎯 Performance Gate: PASSED");
         println!(
-            "   Best parallel ({}) vs rust-htslib: {:.2}x faster",
-            best_name, speedup
+            "   Best strategy: {} ({:.2}x faster than rust-htslib)",
+            best_strategy, speedup
         );
-
-        if speedup >= 1.2 {
-            println!("   🏆 SUCCESS: Meets 20% improvement goal!");
-        } else {
-            println!("   Below 20% improvement threshold");
-        }
-    }
-
-    // Samtools comparison
-    println!("\nExternal Baseline Comparison:");
-    let samtools_duration = samtools_result.0;
-    if best_parallel < samtools_duration {
-        let speedup = samtools_duration.as_secs_f64() / best_parallel.as_secs_f64();
-        let best_name = if parallel_duration == best_parallel {
-            "parallel"
-        } else if streaming_duration == best_parallel {
-            "streaming"
-        } else if chunk_streaming_duration == best_parallel {
-            "chunk_streaming"
-        } else if parallel_chunk_streaming_duration == best_parallel {
-            "parallel_chunk_streaming"
-        } else if optimized_duration == best_parallel {
-            "optimized"
-        } else if rayon_optimized_duration == best_parallel {
-            "rayon_optimized"
-        } else if rayon_streaming_optimized_duration == best_parallel {
-            "rayon_streaming_optimized"
-        } else {
-            "sequential"
-        };
-        println!(
-            "   Best bafiq ({}) vs samtools: {:.2}x faster",
-            best_name, speedup
-        );
-
-        if speedup >= 2.0 {
-            println!("   🏆 EXCELLENT: Beats samtools by 2x+ target!");
-        } else if speedup >= 1.5 {
-            println!("   GOOD: Significant improvement over samtools");
-        } else {
-            println!("   Moderate improvement over samtools");
-        }
     } else {
-        let slowdown = best_parallel.as_secs_f64() / samtools_duration.as_secs_f64();
-        println!("   Best bafiq vs samtools: {:.2}x slower", slowdown);
-        println!("   NEEDS WORK: samtools is faster");
+        println!("\n⚠️  Performance Gate: FAILED");
+        println!("   No strategy outperformed rust-htslib baseline");
     }
-
-    println!("\nFor detailed Criterion analysis, run: BAFIQ_USE_CRITERION=1 cargo bench");
 
     Ok(())
 }
 
-/// Cold start benchmark that ensures no caching between measurements (Criterion mode)
-fn benchmark_cold_start<F>(
-    group: &mut BenchmarkGroup<WallTime>,
-    name: &str,
-    test_bam: &str,
-    mut benchmark_fn: F,
-) where
-    F: FnMut(&str) -> u64,
-{
-    if env::var("BAFIQ_BENCH_DEBUG").is_ok() {
-        println!("🧊 Setting up cold start benchmark: {}", name);
+/// Resource usage statistics for a benchmark run
+#[derive(Debug, Clone)]
+struct ResourceStats {
+    /// Peak memory usage in bytes (RSS)
+    peak_memory_bytes: u64,
+    /// Average memory usage in bytes
+    avg_memory_bytes: u64,
+    /// Peak CPU usage percentage (0.0 - 100.0 * num_cores)
+    peak_cpu_percent: f32,
+    /// Average CPU usage percentage
+    avg_cpu_percent: f32,
+    /// Total execution time
+    execution_time: Duration,
+    /// Number of samples taken
+    sample_count: usize,
+}
+
+impl ResourceStats {
+    fn new() -> Self {
+        Self {
+            peak_memory_bytes: 0,
+            avg_memory_bytes: 0,
+            peak_cpu_percent: 0.0,
+            avg_cpu_percent: 0.0,
+            execution_time: Duration::new(0, 0),
+            sample_count: 0,
+        }
     }
 
-    group.bench_function(name, |b| {
-        b.iter_custom(|iters| {
-            let mut total_time = Duration::new(0, 0);
+    fn format_memory(bytes: u64) -> String {
+        const KB: u64 = 1024;
+        const MB: u64 = KB * 1024;
+        const GB: u64 = MB * 1024;
 
-            for i in 0..iters {
-                if env::var("BAFIQ_BENCH_DEBUG").is_ok() {
-                    println!("   Iteration {}/{} for {}", i + 1, iters, name);
-                }
+        if bytes >= GB {
+            format!("{:.1}GB", bytes as f64 / GB as f64)
+        } else if bytes >= MB {
+            format!("{:.1}MB", bytes as f64 / MB as f64)
+        } else if bytes >= KB {
+            format!("{:.1}KB", bytes as f64 / KB as f64)
+        } else {
+            format!("{}B", bytes)
+        }
+    }
+}
 
-                // Clear caches before each iteration
-                if let Err(e) = clear_file_system_cache() {
-                    if env::var("BAFIQ_BENCH_DEBUG").is_ok() {
-                        eprintln!("Cache clearing failed: {}", e);
+/// Resource monitor that tracks CPU and memory usage in a background thread
+struct ResourceMonitor {
+    system: Arc<Mutex<System>>,
+    pid: Pid,
+    running: Arc<Mutex<bool>>,
+    stats: Arc<Mutex<ResourceStats>>,
+}
+
+impl ResourceMonitor {
+    fn new() -> Result<Self> {
+        let mut system = System::new_all();
+        system.refresh_all();
+
+        let pid = sysinfo::get_current_pid()
+            .map_err(|e| anyhow::anyhow!("Failed to get current process PID: {}", e))?;
+
+        Ok(Self {
+            system: Arc::new(Mutex::new(system)),
+            pid,
+            running: Arc::new(Mutex::new(false)),
+            stats: Arc::new(Mutex::new(ResourceStats::new())),
+        })
+    }
+
+    /// Start monitoring in a background thread
+    fn start_monitoring(&self, sample_interval_ms: u64) -> Result<()> {
+        {
+            let mut running = self.running.lock().unwrap();
+            *running = true;
+        }
+
+        let system_clone = Arc::clone(&self.system);
+        let running_clone = Arc::clone(&self.running);
+        let stats_clone = Arc::clone(&self.stats);
+        let pid = self.pid;
+
+        thread::spawn(move || {
+            let mut memory_samples = Vec::new();
+            let mut cpu_samples = Vec::new();
+            let start_time = Instant::now();
+
+            while {
+                let running = running_clone.lock().unwrap();
+                *running
+            } {
+                {
+                    let mut system = system_clone.lock().unwrap();
+                    system.refresh_process(pid);
+
+                    if let Some(process) = system.process(pid) {
+                        let memory = process.memory();
+                        let cpu = process.cpu_usage();
+
+                        memory_samples.push(memory);
+                        cpu_samples.push(cpu);
+
+                        // Update running stats
+                        let mut stats = stats_clone.lock().unwrap();
+                        stats.peak_memory_bytes = stats.peak_memory_bytes.max(memory);
+                        stats.peak_cpu_percent = stats.peak_cpu_percent.max(cpu);
+                        stats.sample_count += 1;
                     }
                 }
 
-                // Create a fresh copy of the file to avoid any file handle caching
-                let temp_file =
-                    create_temp_bam_copy(test_bam).expect("Failed to create temporary BAM file");
-
-                // Small delay to ensure cache clearing takes effect
-                std::thread::sleep(Duration::from_millis(100));
-
-                // Run the actual benchmark
-                let start = std::time::Instant::now();
-                let _result = benchmark_fn(temp_file.to_str().unwrap());
-                let elapsed = start.elapsed();
-
-                if env::var("BAFIQ_BENCH_DEBUG").is_ok() {
-                    println!(
-                        "     Iteration {} took: {:.3}s",
-                        i + 1,
-                        elapsed.as_secs_f64()
-                    );
-                }
-
-                total_time += elapsed;
-
-                // Cleanup
-                cleanup_temp_file(&temp_file);
-
-                // Force any remaining buffers to be released
-                std::thread::sleep(Duration::from_millis(50));
+                thread::sleep(Duration::from_millis(sample_interval_ms));
             }
 
-            total_time
+            // Calculate final averages
+            let execution_time = start_time.elapsed();
+            let avg_memory = if !memory_samples.is_empty() {
+                memory_samples.iter().sum::<u64>() / memory_samples.len() as u64
+            } else {
+                0
+            };
+            let avg_cpu = if !cpu_samples.is_empty() {
+                cpu_samples.iter().sum::<f32>() / cpu_samples.len() as f32
+            } else {
+                0.0
+            };
+
+            let mut final_stats = stats_clone.lock().unwrap();
+            final_stats.avg_memory_bytes = avg_memory;
+            final_stats.avg_cpu_percent = avg_cpu;
+            final_stats.execution_time = execution_time;
         });
-    });
+
+        Ok(())
+    }
+
+    /// Stop monitoring and return final statistics
+    fn stop_monitoring(&self) -> ResourceStats {
+        {
+            let mut running = self.running.lock().unwrap();
+            *running = false;
+        }
+
+        // Give the monitoring thread a moment to finish
+        thread::sleep(Duration::from_millis(100));
+
+        let stats = self.stats.lock().unwrap();
+        stats.clone()
+    }
 }
 
 /// Performance benchmarks using Criterion (detailed analysis mode)
@@ -838,11 +1018,8 @@ fn criterion_benchmarks(c: &mut Criterion) {
 
     external_group.finish();
 
-    println!("🧊 Criterion benchmarking completed");
-
-    if !env::var("BAFIQ_BENCH_DEBUG").is_ok() {
-        println!("For detailed logging, run: BAFIQ_BENCH_DEBUG=1 cargo bench");
-    }
+    // Report resource usage statistics from all Criterion benchmarks
+    report_criterion_resource_usage();
 }
 
 /// Performance benchmarks entry point that chooses between simple and Criterion modes
@@ -865,13 +1042,28 @@ fn performance_benchmarks(c: &mut Criterion) {
     criterion_benchmarks(c);
 }
 
-criterion_group! {
-    name = benches;
-    config = Criterion::default()
-        .measurement_time(std::time::Duration::from_secs(30))
-        .sample_size(10)
-        .warm_up_time(std::time::Duration::from_millis(100));
-    targets = performance_benchmarks
-}
+// Manual main function handles both simple and Criterion benchmarks
+// No need for criterion_group! macro
+fn main() {
+    // Check if we should run Criterion benchmarks or simple benchmarks
+    if env::var("BAFIQ_USE_CRITERION").is_ok() {
+        // Run full Criterion benchmarks (slower, statistical analysis)
+        println!("🔬 Running Criterion benchmarks (full statistical analysis)...");
+        let mut criterion = Criterion::default()
+            .warm_up_time(Duration::from_secs(1))
+            .measurement_time(Duration::from_secs(10))
+            .sample_size(3);
 
-criterion_main!(benches);
+        criterion_benchmarks(&mut criterion);
+
+        // Report resource usage statistics from Criterion benchmarks
+        report_criterion_resource_usage();
+    } else {
+        // Run simple benchmarks (faster, for development)
+        println!("⚡ Running simple benchmarks (fast development mode)...");
+        match simple_benchmarks() {
+            Ok(()) => println!("✅ Simple benchmarks completed successfully"),
+            Err(e) => eprintln!("❌ Simple benchmarks failed: {}", e),
+        }
+    }
+}

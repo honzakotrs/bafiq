@@ -663,6 +663,12 @@ impl IndexBuilder {
         let mut _total_records = 0;
         let mut pos = 0;
 
+        // Use thread-local buffers for sequential processing (single-threaded, but safe)
+        thread_local! {
+            static BUFFER: std::cell::RefCell<Vec<u8>> = std::cell::RefCell::new(vec![0u8; BGZF_BLOCK_MAX_SIZE]);
+            static DECOMPRESSOR: std::cell::RefCell<Decompressor> = std::cell::RefCell::new(Decompressor::new());
+        }
+
         // Iterate over the memory-mapped file
         while pos < data.len() {
             // Ensure there is enough data for a full BGZF header
@@ -692,27 +698,19 @@ impl IndexBuilder {
             let block = &data[pos..pos + total_block_size];
             let block_offset = pos as i64; // Virtual file offset for this block
 
-            // Use static buffers for sequential processing (single-threaded)
-            static mut BUFFER: Option<Vec<u8>> = None;
-            static mut DECOMPRESSOR: Option<Decompressor> = None;
-
-            let count = unsafe {
-                // Initialize buffers on first use
-                if BUFFER.is_none() {
-                    BUFFER = Some(vec![0u8; BGZF_BLOCK_MAX_SIZE]);
-                }
-                if DECOMPRESSOR.is_none() {
-                    DECOMPRESSOR = Some(Decompressor::new());
-                }
-
-                extract_flags_from_block_pooled(
-                    block,
-                    &mut index,
-                    block_offset,
-                    BUFFER.as_mut().unwrap(),
-                    DECOMPRESSOR.as_mut().unwrap(),
-                )?
-            };
+            let count = BUFFER.with(|buf| {
+                DECOMPRESSOR.with(|decomp| {
+                    let mut buffer = buf.borrow_mut();
+                    let mut decompressor = decomp.borrow_mut();
+                    extract_flags_from_block_pooled(
+                        block,
+                        &mut index,
+                        block_offset,
+                        &mut buffer,
+                        &mut decompressor,
+                    )
+                })
+            })?;
             _total_records += count;
 
             pos += total_block_size;
