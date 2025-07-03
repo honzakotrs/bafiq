@@ -1,2 +1,6 @@
 # Rust gitignore
 target/
+*.bam
+*.sam
+*.bfi
+*.bai
