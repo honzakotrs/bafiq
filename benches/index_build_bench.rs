@@ -1137,7 +1137,7 @@ fn main() {
         let mut criterion = Criterion::default()
             .warm_up_time(Duration::from_secs(1))
             .measurement_time(Duration::from_secs(10))
-            .sample_size(3);
+            .sample_size(10);
 
         criterion_benchmarks(&mut criterion);
 
