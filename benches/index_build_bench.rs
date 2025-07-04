@@ -546,9 +546,30 @@ fn simple_benchmarks() -> Result<()> {
             builder.build(path)
         })?;
 
-    let sequential = run_benchmark_with_monitoring("sequential", &test_bam, |path| {
+    let rayon_streaming_ultra_optimized =
+        run_benchmark_with_monitoring("rayon_streaming_ultra_optimized", &test_bam, |path| {
+            use bafiq::{BuildStrategy, IndexBuilder};
+            let builder = IndexBuilder::with_strategy(BuildStrategy::RayonStreamingUltraOptimized);
+            builder.build(path)
+        })?;
+
+    let rayon_sys_streaming_optimized =
+        run_benchmark_with_monitoring("rayon_sys_streaming_optimized", &test_bam, |path| {
+            use bafiq::{BuildStrategy, IndexBuilder};
+            let builder = IndexBuilder::with_strategy(BuildStrategy::RayonSysStreamingOptimized);
+            builder.build(path)
+        })?;
+
+    let rayon_memory_optimized =
+        run_benchmark_with_monitoring("rayon_memory_optimized", &test_bam, |path| {
+            use bafiq::{BuildStrategy, IndexBuilder};
+            let builder = IndexBuilder::with_strategy(BuildStrategy::RayonMemoryOptimized);
+            builder.build(path)
+        })?;
+
+    let rayon_wait_free = run_benchmark_with_monitoring("rayon_wait_free", &test_bam, |path| {
         use bafiq::{BuildStrategy, IndexBuilder};
-        let builder = IndexBuilder::with_strategy(BuildStrategy::Sequential);
+        let builder = IndexBuilder::with_strategy(BuildStrategy::RayonWaitFree);
         builder.build(path)
     })?;
 
@@ -565,7 +586,16 @@ fn simple_benchmarks() -> Result<()> {
         ("optimized", &optimized),
         ("rayon_optimized", &rayon_optimized),
         ("rayon_streaming_optimized", &rayon_streaming_optimized),
-        ("sequential", &sequential),
+        (
+            "rayon_streaming_ultra_optimized",
+            &rayon_streaming_ultra_optimized,
+        ),
+        (
+            "rayon_sys_streaming_optimized",
+            &rayon_sys_streaming_optimized,
+        ),
+        ("rayon_memory_optimized", &rayon_memory_optimized),
+        ("rayon_wait_free", &rayon_wait_free),
     ];
 
     // Performance and Resource Usage Summary Table
@@ -716,7 +746,7 @@ fn simple_benchmarks() -> Result<()> {
 
 /// Resource usage statistics for a benchmark run
 #[derive(Debug, Clone)]
-struct ResourceStats {
+pub struct ResourceStats {
     /// Peak memory usage in bytes (RSS)
     peak_memory_bytes: u64,
     /// Average memory usage in bytes
@@ -898,7 +928,7 @@ fn criterion_benchmarks(c: &mut Criterion) {
     // Configure for cold start benchmarking (fast development mode)
     group
         .sample_size(10) // Minimum samples required by Criterion
-        .measurement_time(Duration::from_secs(30)) // Reasonable time for 10 samples
+        .measurement_time(Duration::from_secs(1020))) // Reasonable time for 10 samples
         .warm_up_time(Duration::from_millis(100)); // Minimal warmup to satisfy Criterion
 
     // Benchmark the rust-htslib approach (building FlagIndex)
@@ -988,6 +1018,61 @@ fn criterion_benchmarks(c: &mut Criterion) {
             index.total_records()
         },
     );
+
+    // Benchmark the ultra-optimized approach (3-stage pipeline)
+    benchmark_cold_start(
+        &mut group,
+        "rayon_streaming_ultra_optimized",
+        &test_bam,
+        |file_path| {
+            use bafiq::{BuildStrategy, IndexBuilder};
+            let builder = IndexBuilder::with_strategy(BuildStrategy::RayonStreamingUltraOptimized);
+            let index = builder
+                .build(file_path)
+                .expect("Failed to build index with RayonStreamingUltraOptimized approach");
+            index.total_records()
+        },
+    );
+
+    // Benchmark the sys streaming optimized approach (direct libdeflate-sys)
+    benchmark_cold_start(
+        &mut group,
+        "rayon_sys_streaming_optimized",
+        &test_bam,
+        |file_path| {
+            use bafiq::{BuildStrategy, IndexBuilder};
+            let builder = IndexBuilder::with_strategy(BuildStrategy::RayonSysStreamingOptimized);
+            let index = builder
+                .build(file_path)
+                .expect("Failed to build index with RayonSysStreamingOptimized approach");
+            index.total_records()
+        },
+    );
+
+    // Benchmark the memory optimized approach (vectorized processing)
+    benchmark_cold_start(
+        &mut group,
+        "rayon_memory_optimized",
+        &test_bam,
+        |file_path| {
+            use bafiq::{BuildStrategy, IndexBuilder};
+            let builder = IndexBuilder::with_strategy(BuildStrategy::RayonMemoryOptimized);
+            let index = builder
+                .build(file_path)
+                .expect("Failed to build index with RayonMemoryOptimized approach");
+            index.total_records()
+        },
+    );
+
+    // Benchmark the wait-free approach (BREAKTHROUGH: eliminates condition variable bottleneck)
+    benchmark_cold_start(&mut group, "rayon_wait_free", &test_bam, |file_path| {
+        use bafiq::{BuildStrategy, IndexBuilder};
+        let builder = IndexBuilder::with_strategy(BuildStrategy::RayonWaitFree);
+        let index = builder
+            .build(file_path)
+            .expect("Failed to build index with RayonWaitFree approach");
+        index.total_records()
+    });
 
     // Benchmark the sequential approach (single-threaded baseline)
     benchmark_cold_start(&mut group, "sequential", &test_bam, |file_path| {

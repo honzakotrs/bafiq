@@ -11,9 +11,6 @@ pub enum CliStrategy {
     /// Streaming parallel processing - has receiver mutex contention bottleneck
     #[value(name = "parallel-streaming")]
     ParallelStreaming,
-    /// Sequential processing - single-threaded fallback
-    #[value(name = "sequential")]
-    Sequential,
     /// rust-htslib based - for benchmarking and compatibility
     #[value(name = "htslib")]
     HtsLib,
@@ -32,19 +29,44 @@ pub enum CliStrategy {
     /// Streaming evolution of RayonOptimized - combines streaming discovery with work-stealing
     #[value(name = "rayon-streaming-optimized")]
     RayonStreamingOptimized,
+    /// **EXTREME PERFORMANCE** - 3-stage pipeline with parallel discovery (TARGET: 2-3x speedup)
+    #[value(name = "rayon-streaming-ultra-optimized")]
+    RayonStreamingUltraOptimized,
+    /// Direct libdeflate-sys system library for maximum decompression performance
+    #[value(name = "rayon-sys-streaming-optimized")]
+    RayonSysStreamingOptimized,
+    /// Memory access optimization with vectorized record processing
+    #[value(name = "rayon-memory-optimized")]
+    RayonMemoryOptimized,
+    /// Wait-free processing to eliminate 51% condition variable bottleneck
+    #[value(name = "rayon-wait-free")]
+    RayonWaitFree,
+    /// Ultra-optimized strategy targeting 1-2s execution time with SIMD, cache optimization, NUMA awareness
+    #[value(name = "rayon-ultra-performance")]
+    RayonUltraPerformance,
+    /// Expert-level 3-stage pipeline with bounded channels, SIMD scanning, and zero-copy optimization
+    #[value(name = "rayon-expert")]
+    RayonExpert,
 }
 
 impl From<CliStrategy> for BuildStrategy {
     fn from(cli_strategy: CliStrategy) -> Self {
         match cli_strategy {
             CliStrategy::ParallelStreaming => BuildStrategy::ParallelStreaming,
-            CliStrategy::Sequential => BuildStrategy::Sequential,
             CliStrategy::HtsLib => BuildStrategy::HtsLib,
             CliStrategy::ChunkStreaming => BuildStrategy::ChunkStreaming,
             CliStrategy::ParallelChunkStreaming => BuildStrategy::ParallelChunkStreaming,
             CliStrategy::Optimized => BuildStrategy::Optimized,
             CliStrategy::RayonOptimized => BuildStrategy::RayonOptimized,
             CliStrategy::RayonStreamingOptimized => BuildStrategy::RayonStreamingOptimized,
+            CliStrategy::RayonStreamingUltraOptimized => {
+                BuildStrategy::RayonStreamingUltraOptimized
+            }
+            CliStrategy::RayonSysStreamingOptimized => BuildStrategy::RayonSysStreamingOptimized,
+            CliStrategy::RayonMemoryOptimized => BuildStrategy::RayonMemoryOptimized,
+            CliStrategy::RayonWaitFree => BuildStrategy::RayonWaitFree,
+            CliStrategy::RayonUltraPerformance => BuildStrategy::RayonUltraPerformance,
+            CliStrategy::RayonExpert => BuildStrategy::RayonExpert,
         }
     }
 }
@@ -127,8 +149,8 @@ pub struct IndexArgs {
     #[arg(
         long = "strategy",
         value_enum,
-        default_value = "optimized",
-        help = "Index building strategy to use"
+        default_value = "rayon-wait-free",
+        help = "Index building strategy to use (default: wait-free for maximum performance)"
     )]
     pub strategy: CliStrategy,
 

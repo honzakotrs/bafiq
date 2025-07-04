@@ -202,8 +202,8 @@ pub fn build_flag_index_streaming_parallel(bam_path: &str) -> Result<FlagIndex> 
     // Use more workers than CPU cores for I/O bound workload
     let num_threads = (rayon::current_num_threads() * 2).max(8);
 
-    // Create channel for streaming blocks to workers
-    let (sender, receiver) = mpsc::channel::<(usize, usize)>(); // (start_pos, total_size)
+    // PERFORMANCE FIX: Use unbounded crossbeam channel for benchmark streaming too!
+    let (sender, receiver) = crossbeam::channel::unbounded::<(usize, usize)>(); // (start_pos, total_size)
 
     // Producer thread: discover and stream blocks immediately
     let data_producer = Arc::clone(&data);
@@ -251,22 +251,18 @@ pub fn build_flag_index_streaming_parallel(bam_path: &str) -> Result<FlagIndex> 
 
     // Consumer threads: process blocks as they arrive
     let mut worker_handles = Vec::new();
-    let shared_receiver = Arc::new(Mutex::new(receiver));
+    // PERFORMANCE FIX: Remove mutex contention in benchmark module too!
 
     for _thread_id in 0..num_threads {
-        let receiver_clone = Arc::clone(&shared_receiver);
+        let receiver_clone = receiver.clone();
         let data_worker = Arc::clone(&data);
 
         let handle = thread::spawn(move || -> Result<FlagIndex> {
             let mut local_index = FlagIndex::new();
 
             loop {
-                let block_info = {
-                    let receiver = receiver_clone.lock().unwrap();
-                    receiver.recv()
-                };
-
-                match block_info {
+                // PERFORMANCE FIX: Direct channel access - NO MUTEX CONTENTION!
+                match receiver_clone.recv() {
                     Ok((start_pos, total_size)) => {
                         let block = &data_worker[start_pos..start_pos + total_size];
                         let block_offset = start_pos as i64;
@@ -304,8 +300,7 @@ pub fn build_flag_index_streaming_parallel(bam_path: &str) -> Result<FlagIndex> 
         worker_handles.push(handle);
     }
 
-    // Drop receiver so workers can detect completion
-    drop(shared_receiver);
+    // PERFORMANCE FIX: No need to drop receiver manually - crossbeam handles it automatically
 
     // Wait for producer
     let _total_blocks = producer_handle
@@ -544,51 +539,8 @@ pub fn count_flags_libdeflate_thread_pool(
 
 // Helper functions
 
-fn extract_flags_from_block(
-    block: &[u8],
-    index: &mut FlagIndex,
-    block_offset: i64,
-) -> Result<usize> {
-    use crate::bgzf::decompress_and_process;
-
-    let mut record_count = 0;
-
-    decompress_and_process(block, |decompressed_data| {
-        // Check if this is a header block
-        if decompressed_data.len() >= 4 && &decompressed_data[0..4] == b"BAM\x01" {
-            return Ok(());
-        }
-
-        let mut pos = 0;
-        unsafe {
-            let data_ptr = decompressed_data.as_ptr();
-            let data_len = decompressed_data.len();
-
-            while pos + 4 <= data_len {
-                let rec_size =
-                    u32::from_le(ptr::read_unaligned(data_ptr.add(pos) as *const u32)) as usize;
-
-                if pos + 4 + rec_size > data_len {
-                    break;
-                }
-
-                let record_body = std::slice::from_raw_parts(data_ptr.add(pos + 4), rec_size);
-
-                if rec_size >= 16 {
-                    let flags = u16::from_le_bytes([record_body[14], record_body[15]]);
-                    let masked_flags = flags & 0xFFF;
-                    index.add_record_at_block(masked_flags, block_offset);
-                    record_count += 1;
-                }
-
-                pos += 4 + rec_size;
-            }
-        }
-        Ok(())
-    })?;
-
-    Ok(record_count)
-}
+// PERFORMANCE NOTE: extract_flags_from_block removed from benchmark module too!
+// All benchmarks now use extract_flags_from_block_pooled with optimizations
 
 fn count_flags_in_decompressed_block(
     decompressed_data: &[u8],
