@@ -11,8 +11,6 @@ use super::{BlockInfo, IndexingStrategy, BGZF_HEADER_SIZE, BGZF_FOOTER_SIZE, BGZ
 
 /// **WAIT-FREE STRATEGY** - Eliminates the 51% __psynch_cvwait bottleneck
 /// 
-/// **TARGET: Eliminate condition variable waits that waste 51% of CPU time**
-/// 
 /// Key optimizations to remove blocking:
 /// - NO channels, queues, or condition variables
 /// - NO thread::yield_now() or blocking operations

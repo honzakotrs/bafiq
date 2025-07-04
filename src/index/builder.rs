@@ -609,7 +609,7 @@ impl IndexBuilder {
         // Consumer threads: process blocks as they arrive
         let mut worker_handles = Vec::new();
         // PERFORMANCE FIX: No more shared mutex! Each worker gets its own receiver clone
-        
+
         for thread_id in 0..num_threads {
             let receiver_clone = receiver.clone();
             let data_worker = Arc::clone(&data);
@@ -2335,39 +2335,39 @@ impl IndexBuilder {
 
 /// Fast BGZF block discovery (helper function)
 fn discover_blocks_simple(data: &[u8]) -> Result<Vec<BlockInfo>> {
-    let mut blocks = Vec::new();
-    let mut pos = 0;
+        let mut blocks = Vec::new();
+        let mut pos = 0;
 
-    while pos < data.len() {
-        if pos + BGZF_HEADER_SIZE > data.len() {
-            break;
+        while pos < data.len() {
+            if pos + BGZF_HEADER_SIZE > data.len() {
+                break;
+            }
+
+            let header = &data[pos..pos + BGZF_HEADER_SIZE];
+            if header[0..2] != [0x1f, 0x8b] {
+                return Err(anyhow!("Invalid GZIP header at position {}", pos));
+            }
+
+            let bsize = u16::from_le_bytes([header[16], header[17]]) as usize;
+            let total_size = bsize + 1;
+
+            if total_size < BGZF_HEADER_SIZE + BGZF_FOOTER_SIZE || total_size > 65536 {
+                return Err(anyhow!("Invalid BGZF block size: {}", total_size));
+            }
+
+            if pos + total_size > data.len() {
+                break;
+            }
+
+            blocks.push(BlockInfo {
+                start_pos: pos,
+                total_size,
+            });
+
+            pos += total_size;
         }
 
-        let header = &data[pos..pos + BGZF_HEADER_SIZE];
-        if header[0..2] != [0x1f, 0x8b] {
-            return Err(anyhow!("Invalid GZIP header at position {}", pos));
-        }
-
-        let bsize = u16::from_le_bytes([header[16], header[17]]) as usize;
-        let total_size = bsize + 1;
-
-        if total_size < BGZF_HEADER_SIZE + BGZF_FOOTER_SIZE || total_size > 65536 {
-            return Err(anyhow!("Invalid BGZF block size: {}", total_size));
-        }
-
-        if pos + total_size > data.len() {
-            break;
-        }
-
-        blocks.push(BlockInfo {
-            start_pos: pos,
-            total_size,
-        });
-
-        pos += total_size;
-    }
-
-    Ok(blocks)
+        Ok(blocks)
 }
 
 // PERFORMANCE NOTE: extract_flags_from_block removed - it was inefficient!
