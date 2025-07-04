@@ -928,7 +928,7 @@ fn criterion_benchmarks(c: &mut Criterion) {
     // Configure for cold start benchmarking (fast development mode)
     group
         .sample_size(10) // Minimum samples required by Criterion
-        .measurement_time(Duration::from_secs(1020))) // Reasonable time for 10 samples
+        .measurement_time(Duration::from_secs(1020)) // Reasonable time for 10 samples
         .warm_up_time(Duration::from_millis(100)); // Minimal warmup to satisfy Criterion
 
     // Benchmark the rust-htslib approach (building FlagIndex)
