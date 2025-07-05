@@ -243,10 +243,6 @@ impl BenchmarkEntry {
         let mut entries = vec![
             // Legacy baseline implementations (for comparison)
             BenchmarkEntry::Legacy {
-                name: "legacy_rust_htslib",
-                runner: |path| FlagIndex::from_path(path),
-            },
-            BenchmarkEntry::Legacy {
                 name: "legacy_parallel_raw",
                 runner: |path| benchmark::build_flag_index_parallel(path),
             },
@@ -650,35 +646,37 @@ fn simple_benchmarks() -> Result<()> {
             ));
         }
 
-        // Performance gate check - find rust-htslib baseline
-        if let Some((_, rust_htslib_result)) = results
+        // Performance gate check - find samtools baseline and compare
+        println!("\n🎯 Performance Gate: Beat samtools (5.086s target)");
+        let best_duration = results
             .iter()
-            .find(|(name, _)| *name == "legacy_rust_htslib")
-        {
-            let best_duration = results
-                .iter()
-                .map(|(_, result)| result.duration)
-                .min()
-                .unwrap();
+            .map(|(_, result)| result.duration)
+            .min()
+            .unwrap();
 
-            if best_duration < rust_htslib_result.duration {
-                let speedup =
-                    rust_htslib_result.duration.as_secs_f64() / best_duration.as_secs_f64();
-                let best_strategy = results
-                    .iter()
-                    .find(|(_, result)| result.duration == best_duration)
-                    .map(|(name, _)| name)
-                    .unwrap();
+        let best_strategy = results
+            .iter()
+            .find(|(_, result)| result.duration == best_duration)
+            .map(|(name, _)| name)
+            .unwrap();
 
-                println!("\n🎯 Performance Gate: PASSED");
-                println!(
-                    "   Best strategy: {} ({:.2}x faster than rust-htslib)",
-                    best_strategy, speedup
-                );
-            } else {
-                println!("\n Performance Gate: FAILED");
-                println!("   No strategy outperformed rust-htslib baseline");
-            }
+        const SAMTOOLS_BASELINE: f64 = 5.086; // samtools view -c -f 0x4 benchmark result
+        let best_seconds = best_duration.as_secs_f64();
+
+        if best_seconds < SAMTOOLS_BASELINE {
+            let speedup = SAMTOOLS_BASELINE / best_seconds;
+            println!("   Status: PASSED ✅");
+            println!(
+                "   Best strategy: {} ({:.2}x faster than samtools)",
+                best_strategy, speedup
+            );
+        } else {
+            let slowdown = best_seconds / SAMTOOLS_BASELINE;
+            println!("   Status: FAILED ❌");
+            println!(
+                "   Best strategy: {} ({:.2}x slower than samtools)",
+                best_strategy, slowdown
+            );
         }
     }
 

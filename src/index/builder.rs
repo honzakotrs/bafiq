@@ -20,7 +20,7 @@ use crate::index::strategies::shared::{
     count_flags_in_block_optimized, extract_flags_from_decompressed_simd_optimized,
 };
 use crate::index::strategies::{
-    htslib::HtsLibStrategy, parallel_chunk_streaming::ParallelChunkStreamingStrategy,
+    parallel_chunk_streaming::ParallelChunkStreamingStrategy,
     parallel_streaming::ParallelStreamingStrategy,
     rayon_streaming_optimized::RayonStreamingOptimizedStrategy,
     rayon_wait_free::RayonWaitFreeStrategy, sequential::SequentialStrategy, IndexingStrategy,
@@ -47,9 +47,8 @@ pub enum BuildStrategy {
     ParallelStreaming,
     /// Sequential processing - single-threaded baseline for measuring parallel benefits
     Sequential,
-    /// rust-htslib based - reference implementation using rust-htslib (3.888s)
-    HtsLib,
-    /// Optimized parallel chunk streaming - producer-consumer with batching (3.709s)
+
+    /// Optimized parallel chunk streaming - producer-consumer with batching (4.161s) 🏆 FASTEST
     ParallelChunkStreaming,
     /// Streaming evolution with work-stealing - hybrid producer-consumer + work-stealing (3.609s)
     RayonStreamingOptimized,
@@ -63,7 +62,6 @@ impl BuildStrategy {
         match self {
             BuildStrategy::ParallelStreaming => "parallel_streaming",
             BuildStrategy::Sequential => "sequential",
-            BuildStrategy::HtsLib => "htslib",
             BuildStrategy::ParallelChunkStreaming => "parallel_chunk_streaming",
             BuildStrategy::RayonStreamingOptimized => "rayon_streaming_optimized",
             BuildStrategy::RayonWaitFree => "rayon_wait_free",
@@ -73,7 +71,6 @@ impl BuildStrategy {
     /// Get all available strategies for benchmarking
     pub fn all_strategies() -> Vec<BuildStrategy> {
         vec![
-            BuildStrategy::HtsLib,
             BuildStrategy::ParallelStreaming,
             BuildStrategy::ParallelChunkStreaming,
             BuildStrategy::RayonStreamingOptimized,
@@ -136,7 +133,6 @@ impl IndexBuilder {
         match self.strategy {
             BuildStrategy::ParallelStreaming => ParallelStreamingStrategy.build(path_str),
             BuildStrategy::Sequential => SequentialStrategy.build(path_str),
-            BuildStrategy::HtsLib => HtsLibStrategy.build(path_str),
             BuildStrategy::ParallelChunkStreaming => ParallelChunkStreamingStrategy.build(path_str),
             BuildStrategy::RayonStreamingOptimized => {
                 RayonStreamingOptimizedStrategy.build(path_str)

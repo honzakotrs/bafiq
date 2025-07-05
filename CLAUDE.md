@@ -28,3 +28,4 @@ of being faster leveraging rust language features and ecosystem
 - never duplicate unless explicitly asked (temporary tests etc.)
 - do not write tests unless asked as the code might evolve further first
 - before removing files make sure with the user that changes are commited
+- never use emojis! Not in logs, not in comments, nowhere!

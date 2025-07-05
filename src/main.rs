@@ -14,9 +14,7 @@ pub enum CliStrategy {
     /// Streaming parallel processing - simplest high-performance producer-consumer (3.433s)
     #[value(name = "parallel-streaming")]
     ParallelStreaming,
-    /// rust-htslib based - reference implementation using rust-htslib (3.888s)
-    #[value(name = "htslib")]
-    HtsLib,
+
     /// Optimized parallel chunk streaming - producer-consumer with batching (3.709s)
     #[value(name = "parallel-chunk-streaming")]
     ParallelChunkStreaming,
@@ -33,7 +31,6 @@ impl From<CliStrategy> for BuildStrategy {
         match cli_strategy {
             CliStrategy::Sequential => BuildStrategy::Sequential,
             CliStrategy::ParallelStreaming => BuildStrategy::ParallelStreaming,
-            CliStrategy::HtsLib => BuildStrategy::HtsLib,
             CliStrategy::ParallelChunkStreaming => BuildStrategy::ParallelChunkStreaming,
             CliStrategy::RayonStreamingOptimized => BuildStrategy::RayonStreamingOptimized,
             CliStrategy::RayonWaitFree => BuildStrategy::RayonWaitFree,

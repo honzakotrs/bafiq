@@ -2,7 +2,7 @@ use crate::FlagIndex;
 use anyhow::Result;
 
 // Re-export remaining strategy implementations
-pub mod htslib;
+
 pub mod parallel_chunk_streaming;
 pub mod parallel_streaming;
 pub mod rayon_streaming_optimized;
