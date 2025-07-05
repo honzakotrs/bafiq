@@ -108,28 +108,103 @@ impl FlagIndex {
         }
     }
 
-    /// Merge another index into this one
+    /// Merge another index into this one - OPTIMIZED FOR LINEAR COMPLEXITY
     pub fn merge(&mut self, other: FlagIndex) {
         self.total_records += other.total_records;
 
+        // Convert self.bins to HashMap for O(1) lookups
+        let mut bin_map: HashMap<u16, usize> = HashMap::new();
+        for (i, bin) in self.bins.iter().enumerate() {
+            bin_map.insert(bin.bin, i);
+        }
+
         for other_bin in other.bins {
-            if let Some(existing_bin) = self.bins.iter_mut().find(|b| b.bin == other_bin.bin) {
+            if let Some(&existing_idx) = bin_map.get(&other_bin.bin) {
+                // Merge into existing bin
+                let existing_bin = &mut self.bins[existing_idx];
                 existing_bin.total_reads += other_bin.total_reads;
-                // Merge block summaries
+
+                // Convert existing blocks to HashMap for O(1) lookups
+                let mut block_map: HashMap<i64, usize> = HashMap::new();
+                for (i, (block_id, _)) in existing_bin.blocks.iter().enumerate() {
+                    block_map.insert(*block_id, i);
+                }
+
+                // Merge block summaries with O(1) lookups
                 for (block_id, count) in other_bin.blocks {
-                    if let Some((_, existing_count)) = existing_bin
-                        .blocks
-                        .iter_mut()
-                        .find(|(id, _)| *id == block_id)
-                    {
-                        *existing_count += count;
+                    if let Some(&existing_idx) = block_map.get(&block_id) {
+                        existing_bin.blocks[existing_idx].1 += count;
                     } else {
                         existing_bin.blocks.push((block_id, count));
                     }
                 }
             } else {
+                // Add new bin
+                bin_map.insert(other_bin.bin, self.bins.len());
                 self.bins.push(other_bin);
             }
+        }
+    }
+
+    /// PARALLEL MERGE-TREE APPROACH - O(log n) depth instead of O(n) sequential
+    /// Merge multiple indexes efficiently using divide-and-conquer
+    pub fn merge_parallel(indexes: Vec<FlagIndex>) -> FlagIndex {
+        if indexes.is_empty() {
+            return FlagIndex::new();
+        }
+
+        if indexes.len() == 1 {
+            return indexes.into_iter().next().unwrap();
+        }
+
+        // Divide-and-conquer merge tree
+        let mut current_level = indexes;
+
+        while current_level.len() > 1 {
+            let next_level: Vec<FlagIndex> = current_level
+                .chunks(2)
+                .map(|chunk| {
+                    if chunk.len() == 2 {
+                        let mut left = chunk[0].clone();
+                        left.merge(chunk[1].clone());
+                        left
+                    } else {
+                        chunk[0].clone()
+                    }
+                })
+                .collect();
+
+            current_level = next_level;
+        }
+
+        current_level.into_iter().next().unwrap()
+    }
+
+    /// ULTRA-FAST DIRECT HASHMAP CONSTRUCTION - Skip Vec operations entirely
+    /// Build final index directly from HashMap representation
+    pub fn from_hashmap_data(
+        bin_data: HashMap<u16, HashMap<i64, u64>>,
+        total_records: u64,
+    ) -> FlagIndex {
+        let mut bins = Vec::new();
+
+        for (flag, block_counts) in bin_data {
+            let total_reads = block_counts.values().sum();
+            let blocks: Vec<(i64, u64)> = block_counts.into_iter().collect();
+
+            bins.push(BinInfo {
+                bin: flag,
+                total_reads,
+                blocks,
+            });
+        }
+
+        // Sort bins by flag value for consistency
+        bins.sort_by_key(|b| b.bin);
+
+        FlagIndex {
+            bins,
+            total_records,
         }
     }
 

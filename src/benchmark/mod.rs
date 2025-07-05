@@ -117,11 +117,8 @@ pub fn build_flag_index_parallel(bam_path: &str) -> Result<FlagIndex> {
         .map(|chunk| process_block_chunk(data, chunk).expect("Block processing failed"))
         .collect();
 
-    // Merge all local indexes
-    let mut final_index = FlagIndex::new();
-    for local_index in local_indexes {
-        final_index.merge(local_index);
-    }
+    // Merge all local indexes using parallel merge tree
+    let final_index = FlagIndex::merge_parallel(local_indexes);
 
     Ok(final_index)
 }
@@ -307,12 +304,12 @@ pub fn build_flag_index_streaming_parallel(bam_path: &str) -> Result<FlagIndex> 
         .join()
         .map_err(|e| anyhow!("Producer thread failed: {:?}", e))??;
 
-    // Wait for all workers and merge their indexes
-    let mut final_index = FlagIndex::new();
+    // Wait for all workers and merge their indexes using parallel merge tree
+    let mut local_indexes = Vec::new();
     for handle in worker_handles.into_iter() {
         match handle.join() {
             Ok(Ok(local_index)) => {
-                final_index.merge(local_index);
+                local_indexes.push(local_index);
             }
             Ok(Err(e)) => {
                 return Err(e);
@@ -323,6 +320,7 @@ pub fn build_flag_index_streaming_parallel(bam_path: &str) -> Result<FlagIndex> 
         }
     }
 
+    let final_index = FlagIndex::merge_parallel(local_indexes);
     Ok(final_index)
 }
 

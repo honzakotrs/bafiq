@@ -79,12 +79,9 @@ impl IndexingStrategy for RayonWaitFreeStrategy {
            })
            .collect::<Result<Vec<_>, _>>()?;
         
-        // **PHASE 3: SINGLE-THREADED MERGE**
-        // Simple sequential merge - no parallelization overhead
-        let mut final_index = FlagIndex::new();
-        for local_index in local_indexes {
-            final_index.merge(local_index);
-        }
+        // **PHASE 3: PARALLEL MERGE-TREE**
+        // Use divide-and-conquer merge tree instead of sequential O(n²) merging
+        let final_index = FlagIndex::merge_parallel(local_indexes);
         
         Ok(final_index)
     }

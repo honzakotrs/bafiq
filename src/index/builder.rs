@@ -22,7 +22,8 @@ use crate::index::strategies::shared::{
 use crate::index::strategies::{
     parallel_streaming::ParallelStreamingStrategy,
     rayon_streaming_optimized::RayonStreamingOptimizedStrategy,
-    rayon_wait_free::RayonWaitFreeStrategy, sequential::SequentialStrategy, IndexingStrategy,
+    rayon_wait_free::RayonWaitFreeStrategy, sequential::SequentialStrategy,
+    zero_merge::ZeroMergeStrategy, IndexingStrategy,
 };
 
 /// Information about a BGZF block's location in the file
@@ -51,6 +52,8 @@ pub enum BuildStrategy {
     RayonStreamingOptimized,
     /// Wait-free processing - fastest performing approach (3.409s) 🏆 FASTEST
     RayonWaitFree,
+    /// Zero-merge processing - eliminates O(n²) merge bottleneck for large files 🚀 SCALES
+    ZeroMerge,
 }
 
 impl BuildStrategy {
@@ -61,6 +64,7 @@ impl BuildStrategy {
             BuildStrategy::Sequential => "sequential",
             BuildStrategy::RayonStreamingOptimized => "rayon_streaming_optimized",
             BuildStrategy::RayonWaitFree => "rayon_wait_free",
+            BuildStrategy::ZeroMerge => "zero_merge",
         }
     }
 
@@ -70,6 +74,7 @@ impl BuildStrategy {
             BuildStrategy::ParallelStreaming,
             BuildStrategy::RayonStreamingOptimized,
             BuildStrategy::RayonWaitFree,
+            BuildStrategy::ZeroMerge,
             BuildStrategy::Sequential, // Last because it's often muted
         ]
     }
@@ -132,6 +137,7 @@ impl IndexBuilder {
                 RayonStreamingOptimizedStrategy.build(path_str)
             }
             BuildStrategy::RayonWaitFree => RayonWaitFreeStrategy.build(path_str),
+            BuildStrategy::ZeroMerge => ZeroMergeStrategy.build(path_str),
         }
     }
 
@@ -770,11 +776,8 @@ impl IndexBuilder {
             // Signal decompression completion so processing threads can exit
             decompression_done.store(true, Ordering::Release);
 
-            // Merge results
-            let mut final_index = FlagIndex::new();
-            for local_index in processing_results {
-                final_index.merge(local_index);
-            }
+            // Merge results using parallel merge tree
+            let final_index = FlagIndex::merge_parallel(processing_results);
 
             Ok(final_index)
         })

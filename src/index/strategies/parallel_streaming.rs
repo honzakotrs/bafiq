@@ -137,11 +137,9 @@ impl IndexingStrategy for ParallelStreamingStrategy {
                 })
                 .collect();
             
-            // Combine results
-            let mut final_index = FlagIndex::new();
-            for handle in results {
-                final_index.merge(handle.join().unwrap());
-            }
+            // Combine results using parallel merge tree
+            let local_indexes: Vec<FlagIndex> = results.into_iter().map(|handle| handle.join().unwrap()).collect();
+            let final_index = FlagIndex::merge_parallel(local_indexes);
             
             Ok(final_index)
         })

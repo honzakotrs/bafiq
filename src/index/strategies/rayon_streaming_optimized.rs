@@ -135,11 +135,8 @@ impl IndexingStrategy for RayonStreamingOptimizedStrategy {
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             
-            // Merge results from all workers
-            let mut final_index = FlagIndex::new();
-            for local_index in local_indexes {
-                final_index.merge(local_index);
-            }
+            // Merge results using parallel merge tree
+            let final_index = FlagIndex::merge_parallel(local_indexes);
             
             Ok(final_index)
         })
