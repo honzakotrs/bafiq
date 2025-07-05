@@ -51,7 +51,7 @@ pub fn extract_flags_from_decompressed_simd_optimized(
     let mut pos = 0;
 
     // Process records in chunks for better cache locality
-    const PREFETCH_DISTANCE: usize = 64; // Cache line size for optimal prefetching
+    // Removed unused PREFETCH_DISTANCE constant
 
     unsafe {
         let out_ptr = output_buffer.as_ptr();

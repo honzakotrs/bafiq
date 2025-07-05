@@ -29,10 +29,7 @@ impl<T> SparseStorage<T> {
         }
     }
 
-    /// Get number of stored flags (not 2^16, but actual used flags)
-    pub fn num_flags(&self) -> usize {
-        self.used_flags.len()
-    }
+    // Removed unused num_flags method
 
     /// Get sparse index for a flag value
     pub fn get_sparse_index(&self, flag: u16) -> Option<usize> {
@@ -68,14 +65,7 @@ impl<T> SparseStorage<T> {
             .and_then(|idx| self.data.get(idx))
     }
 
-    /// Get mutable data for a specific flag
-    pub fn get_data_mut(&mut self, flag: u16) -> Option<&mut T> {
-        if let Some(idx) = self.get_sparse_index(flag) {
-            self.data.get_mut(idx)
-        } else {
-            None
-        }
-    }
+    // Removed unused get_data_mut method
 
     /// Create sparse storage from a flag index
     pub fn from_flag_index(flag_index: &crate::FlagIndex) -> Self {

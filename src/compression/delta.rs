@@ -41,13 +41,7 @@ impl DeltaEncoder {
         Ok(())
     }
 
-    /// Get compression ratio compared to original
-    pub fn compression_ratio(&self, original_count: usize) -> f64 {
-        if original_count == 0 {
-            return 0.0;
-        }
-        self.data.len() as f64 / (original_count * 8) as f64
-    }
+    // Removed unused compression_ratio method
 
     /// Convert to bytes for storage
     pub fn to_bytes(&self) -> Vec<u8> {
@@ -69,13 +63,7 @@ pub struct DeltaDecoder {
 }
 
 impl DeltaDecoder {
-    pub fn new(data: Vec<u8>, first_value: i64, count: usize) -> Self {
-        Self {
-            data,
-            first_value,
-            count,
-        }
-    }
+    // Removed unused new method - use from_bytes instead
 
     /// Create from bytes (alternative constructor)
     pub fn from_bytes(data: &[u8]) -> Result<Self> {

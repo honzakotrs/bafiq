@@ -800,25 +800,7 @@ impl IndexBuilder {
 
 // extract_flags_from_block_sys function has been removed with RayonSysStreamingOptimized strategy
 
-/// **ULTRA-OPTIMIZED VECTORIZED FLAG EXTRACTION**
-///
-/// Advanced optimizations for 2-3x speedup:
-/// - Vectorized record processing with SIMD acceleration
-/// - Optimized memory access patterns with prefetching
-/// - Minimal branching for better CPU pipeline utilization
-/// - Cache-friendly record batching
-
 // PERFORMANCE NOTE: read_record_headers removed - it was only used by the inefficient extract_flags_from_block
 
-/// Block information for ultra-optimized pipeline
-#[derive(Clone)]
-struct UltraBlockInfo {
-    start_pos: usize,
-    total_size: usize,
-}
-
-/// Decompressed block with metadata for ultra performance
-struct UltraDecompressedBlock {
-    data: Vec<u8>,
-    block_offset: i64,
-}
+// Removed unused UltraBlockInfo and UltraDecompressedBlock structs
+// Removed unused ULTRA-OPTIMIZED VECTORIZED FLAG EXTRACTION doc comment

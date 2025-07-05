@@ -1,3 +1,5 @@
+#![allow(dead_code)] // Query engine is infrastructure for future functionality
+
 use crate::index::format::{IndexAccessor, SerializableIndex};
 use crate::{FlagIndex, FLAG_MASK, N_FLAGS};
 use anyhow::Result;

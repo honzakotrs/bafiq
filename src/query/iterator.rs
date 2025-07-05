@@ -1,5 +1,7 @@
-use crate::index::SerializableIndex;
+#![allow(dead_code)] // Query iterators are infrastructure for future functionality
+
 use crate::query::{QueryEngine, QueryRequest};
+use crate::SerializableIndex;
 use anyhow::Result;
 use rust_htslib::bam::{self, Read};
 use std::path::Path;

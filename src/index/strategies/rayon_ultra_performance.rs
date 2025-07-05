@@ -170,7 +170,7 @@ fn extract_flags_vectorized_ultra_optimized(
     block_offset: i64,
 ) -> Result<()> {
     // **CACHE-FRIENDLY PROCESSING**: Process in cache line chunks
-    const CACHE_LINE_SIZE: usize = 64;
+    // Removed unused CACHE_LINE_SIZE constant
     let mut current_offset = 0i64;
     
     // **VECTORIZED EXTRACTION**: Process multiple records simultaneously

@@ -6,16 +6,7 @@ use std::io::{BufReader, BufWriter, Write};
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// Trait for serializable index formats (legacy - replaced by concrete SerializableIndex)
-pub trait IndexSerializationTrait {
-    /// Save index to file
-    fn save<P: AsRef<Path>>(&self, path: P) -> Result<()>;
-
-    /// Load index from file
-    fn load<P: AsRef<Path>>(path: P) -> Result<Self>
-    where
-        Self: Sized;
-}
+// Removed unused IndexSerializationTrait (legacy trait replaced by concrete SerializableIndex)
 
 /// Version information for backwards compatibility
 const BAFIQ_FORMAT_VERSION: u32 = 1;
