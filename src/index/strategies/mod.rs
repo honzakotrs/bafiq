@@ -4,6 +4,7 @@ use anyhow::Result;
 // Re-export all strategy implementations
 pub mod parallel_streaming;
 pub mod rayon_wait_free;
+pub mod sequential;
 pub mod shared;
 
 // Common types used across strategies
