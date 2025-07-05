@@ -19,10 +19,6 @@ use super::shared::{discover_blocks_fast, extract_flags_from_block_pooled};
 pub struct RayonWaitFreeStrategy;
 
 impl IndexingStrategy for RayonWaitFreeStrategy {
-    fn name(&self) -> &'static str {
-        "rayon-wait-free"
-    }
-
     fn build(&self, bam_path: &str) -> Result<FlagIndex> {
         let file = File::open(bam_path)?;
         let mmap = unsafe { Mmap::map(&file)? };

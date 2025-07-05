@@ -14,10 +14,6 @@ use crate::FlagIndex;
 pub struct SequentialStrategy;
 
 impl IndexingStrategy for SequentialStrategy {
-    fn name(&self) -> &'static str {
-        "sequential"
-    }
-
     fn build(&self, bam_path: &str) -> Result<FlagIndex> {
         let file = File::open(bam_path)?;
         let mmap = unsafe { Mmap::map(&file)? };

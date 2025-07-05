@@ -2,6 +2,9 @@ use crate::FlagIndex;
 use anyhow::Result;
 
 // Re-export all strategy implementations
+pub mod chunk_streaming;
+pub mod htslib;
+pub mod parallel_chunk_streaming;
 pub mod parallel_streaming;
 pub mod rayon_wait_free;
 pub mod sequential;
@@ -14,13 +17,10 @@ pub struct BlockInfo {
     pub total_size: usize,
 }
 
-/// Strategy trait for different indexing approaches
+/// Common trait for all indexing strategies
 pub trait IndexingStrategy {
-    /// Build a flag index from a BAM file
+    /// Build a flag index from a BAM file path
     fn build(&self, bam_path: &str) -> Result<FlagIndex>;
-
-    /// Get the strategy name for identification
-    fn name(&self) -> &'static str;
 }
 
 // Constants shared across strategies
