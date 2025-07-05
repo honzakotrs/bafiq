@@ -310,8 +310,6 @@ fn run_samtools_count(input_file: &str) -> Result<u64> {
     let output = Command::new("samtools")
         .arg("view")
         .arg("-c")
-        .arg("-f")
-        .arg("0x4")
         .arg(input_file)
         .output()
         .map_err(|e| anyhow::anyhow!("Failed to run samtools (is it installed?): {}", e))?;
@@ -1046,7 +1044,7 @@ fn criterion_benchmarks(c: &mut Criterion) {
         &mut external_group,
         "samtools_view_c",
         &test_bam,
-        |file_path| run_samtools_count(file_path).expect("Failed to run samtools view -c -f 0x4"),
+        |file_path| run_samtools_count(file_path).expect("Failed to run samtools view -c"),
     );
 
     external_group.finish();
