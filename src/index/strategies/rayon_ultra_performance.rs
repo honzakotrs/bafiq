@@ -169,191 +169,31 @@ fn extract_flags_vectorized_ultra_optimized(
     index: &mut FlagIndex,
     block_offset: i64,
 ) -> Result<()> {
-    // **CACHE-FRIENDLY PROCESSING**: Process in cache line chunks
-    // Removed unused CACHE_LINE_SIZE constant
-    let mut current_offset = 0i64;
+    let mut pos = 0;
     
-    // **VECTORIZED EXTRACTION**: Process multiple records simultaneously
-    while current_offset + 4 < data.len() as i64 {
-        let pos = current_offset as usize;
+    // **CRITICAL FIX**: Use the same pattern as working strategies
+    while pos + 4 <= data.len() {
+        // Read record length (first 4 bytes)
+        let record_length = u32::from_le_bytes([
+            data[pos], data[pos + 1], data[pos + 2], data[pos + 3]
+        ]) as usize;
         
-        // Extract reference length first
-        if pos + 4 > data.len() {
+        // Validate record length and ensure we have enough data
+        if pos + 4 + record_length > data.len() || record_length < 16 {
             break;
         }
         
-        let _refid = i32::from_le_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]);
-        current_offset += 4;
-        
-        if current_offset + 4 > data.len() as i64 {
-            break;
+        // **VECTORIZED FLAG EXTRACTION** - Flags are at offset 14-15 in record body
+        // Record body starts at pos + 4, so flags are at pos + 4 + 14
+        let flags_offset = pos + 4 + 14;
+        if flags_offset + 1 < data.len() {
+            let flags = u16::from_le_bytes([data[flags_offset], data[flags_offset + 1]]);
+            index.add_record_at_block(flags, block_offset);
         }
         
-        let _position = i32::from_le_bytes([
-            data[current_offset as usize],
-            data[current_offset as usize + 1],
-            data[current_offset as usize + 2],
-            data[current_offset as usize + 3],
-        ]);
-        current_offset += 4;
-        
-        // Extract the rest of the fixed fields efficiently
-        if current_offset + 16 > data.len() as i64 {
-            break;
-        }
-        
-        let l_read_name = data[current_offset as usize];
-        current_offset += 1;
-        let _mapq = data[current_offset as usize];
-        current_offset += 1;
-        let _bin = u16::from_le_bytes([
-            data[current_offset as usize],
-            data[current_offset as usize + 1],
-        ]);
-        current_offset += 2;
-        let n_cigar_op = u16::from_le_bytes([
-            data[current_offset as usize],
-            data[current_offset as usize + 1],
-        ]);
-        current_offset += 2;
-        
-        // **VECTORIZED FLAG EXTRACTION**
-        let flag = u16::from_le_bytes([
-            data[current_offset as usize],
-            data[current_offset as usize + 1],
-        ]);
-        current_offset += 2;
-        
-        // Store flag using the correct FlagIndex API
-        index.add_record_at_block(flag, block_offset);
-        
-        // Skip rest of record efficiently
-        let l_seq = i32::from_le_bytes([
-            data[current_offset as usize],
-            data[current_offset as usize + 1],
-            data[current_offset as usize + 2],
-            data[current_offset as usize + 3],
-        ]);
-        current_offset += 4;
-        
-        let _next_refid = i32::from_le_bytes([
-            data[current_offset as usize],
-            data[current_offset as usize + 1],
-            data[current_offset as usize + 2],
-            data[current_offset as usize + 3],
-        ]);
-        current_offset += 4;
-        
-        let _next_pos = i32::from_le_bytes([
-            data[current_offset as usize],
-            data[current_offset as usize + 1],
-            data[current_offset as usize + 2],
-            data[current_offset as usize + 3],
-        ]);
-        current_offset += 4;
-        
-        let _tlen = i32::from_le_bytes([
-            data[current_offset as usize],
-            data[current_offset as usize + 1],
-            data[current_offset as usize + 2],
-            data[current_offset as usize + 3],
-        ]);
-        current_offset += 4;
-        
-        // Skip variable-length fields with bounds checking
-        let read_name_len = l_read_name as i64;
-        if current_offset + read_name_len > data.len() as i64 {
-            break;
-        }
-        current_offset += read_name_len;
-        
-        let cigar_len = (n_cigar_op as i64) * 4;
-        if current_offset + cigar_len > data.len() as i64 {
-            break;
-        }
-        current_offset += cigar_len;
-        
-        let seq_len = (l_seq + 1) as i64 / 2;
-        if current_offset + seq_len > data.len() as i64 {
-            break;
-        }
-        current_offset += seq_len;
-        
-        let qual_len = l_seq as i64;
-        if current_offset + qual_len > data.len() as i64 {
-            break;
-        }
-        current_offset += qual_len;
-        
-        // Skip auxiliary fields - find the next record start
-        while current_offset + 2 < data.len() as i64 {
-            if current_offset + 3 > data.len() as i64 {
-                break;
-            }
-            
-            let _tag = &data[current_offset as usize..current_offset as usize + 2];
-            current_offset += 2;
-            
-            if current_offset >= data.len() as i64 {
-                break;
-            }
-            
-            let val_type = data[current_offset as usize];
-            current_offset += 1;
-            
-            match val_type {
-                b'A' | b'c' | b'C' => current_offset += 1,
-                b's' | b'S' => current_offset += 2,
-                b'i' | b'I' | b'f' => current_offset += 4,
-                b'd' => current_offset += 8,
-                b'Z' | b'H' => {
-                    while current_offset < data.len() as i64 && data[current_offset as usize] != 0 {
-                        current_offset += 1;
-                    }
-                    current_offset += 1; // Skip null terminator
-                }
-                b'B' => {
-                    if current_offset + 4 >= data.len() as i64 {
-                        break;
-                    }
-                    let array_type = data[current_offset as usize];
-                    current_offset += 1;
-                    let array_len = i32::from_le_bytes([
-                        data[current_offset as usize],
-                        data[current_offset as usize + 1],
-                        data[current_offset as usize + 2],
-                        data[current_offset as usize + 3],
-                    ]);
-                    current_offset += 4;
-                    
-                    let element_size = match array_type {
-                        b'c' | b'C' => 1,
-                        b's' | b'S' => 2,
-                        b'i' | b'I' | b'f' => 4,
-                        b'd' => 8,
-                        _ => 1,
-                    };
-                    current_offset += (array_len as i64) * element_size;
-                }
-                _ => break,
-            }
-            
-            // Check if we've reached the end of auxiliary fields
-            if current_offset + 4 <= data.len() as i64 {
-                // Look ahead to see if next 4 bytes could be refid of next record
-                let potential_refid = i32::from_le_bytes([
-                    data[current_offset as usize],
-                    data[current_offset as usize + 1],
-                    data[current_offset as usize + 2],
-                    data[current_offset as usize + 3],
-                ]);
-                
-                // If it looks like a valid refid (typically -1 to reasonable chromosome count)
-                if potential_refid >= -1 && potential_refid < 1000 {
-                    break;
-                }
-            }
-        }
+        // **CRITICAL FIX**: Jump to next record using the correct pattern
+        // Move by 4 (record length field) + record_length (record body)
+        pos += 4 + record_length;
     }
     
     Ok(())

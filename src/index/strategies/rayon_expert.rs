@@ -1,5 +1,7 @@
-use crate::bgzf::{BGZF_BLOCK_MAX_SIZE, BGZF_FOOTER_SIZE, BGZF_HEADER_SIZE};
-use crate::index::strategies::shared::extract_flags_from_decompressed_simd_optimized;
+use crate::bgzf::BGZF_BLOCK_MAX_SIZE;
+use crate::index::strategies::shared::{
+    discover_blocks_fast, extract_flags_from_decompressed_simd_optimized,
+};
 use crate::index::strategies::{BlockInfo, IndexingStrategy};
 use crate::FlagIndex;
 use anyhow::Result;
@@ -41,7 +43,7 @@ impl IndexingStrategy for RayonExpertStrategy {
         let file = File::open(bam_path)?;
         let mmap = unsafe { Mmap::map(&file)? };
         let data = Arc::new(mmap);
-        let file_size = data.len();
+        let _file_size = data.len();
 
         let num_threads = num_cpus::get(); // Get optimal thread count
 
@@ -60,72 +62,25 @@ impl IndexingStrategy for RayonExpertStrategy {
 
         // **2-STAGE PIPELINE** - Discovery + Combined Decompression/Processing
         crossbeam::thread::scope(|s| {
-            // ── STAGE 1: Parallel BGZF Header Discovery ──
-            let seg_size = (file_size + num_threads - 1) / num_threads; // ceiling division
+            // ── STAGE 1: PROVEN SINGLE-THREADED BLOCK DISCOVERY ──
+            // CRITICAL FIX: Use proven single-threaded discovery to avoid boundary issues
+            let tx_out = tx_disc.clone();
+            let data_discovery = Arc::clone(&data);
 
-            // Collect discovery handles to ensure they complete before processing
-            let mut discovery_handles = Vec::new();
+            let discovery_handle = s.spawn(move |_| -> Result<usize> {
+                // Use the same proven discovery logic as working strategies
+                let blocks = discover_blocks_fast(&data_discovery)?;
+                let block_count = blocks.len();
 
-            for tid in 0..num_threads {
-                let data_seg = Arc::clone(&data);
-                let tx_out = tx_disc.clone();
-
-                let handle = s.spawn(move |_| {
-                    let seg_start = tid * seg_size;
-                    let seg_end = (seg_start + seg_size).min(file_size);
-                    let mut pos = seg_start;
-
-                    // If not first segment, find first magic bytes using SIMD
-                    if tid != 0 {
-                        if let Some(rel) = memchr::memchr2(0x1f, 0x8b, &data_seg[pos..seg_end]) {
-                            pos += rel;
-                        } else {
-                            return; // No blocks in this segment
-                        }
+                // Send all discovered blocks to processing stage
+                for block_info in blocks {
+                    if tx_out.send(block_info).is_err() {
+                        break; // Channel closed
                     }
+                }
 
-                    // **SIMD-accelerated block discovery**
-                    while pos + BGZF_HEADER_SIZE <= seg_end {
-                        // Quick rejection with SIMD-found candidates
-                        if &data_seg[pos..pos + 2] != &[0x1f, 0x8b] {
-                            pos += 1;
-                            continue;
-                        }
-
-                        // Extract block size with bounds checking
-                        if pos + 17 >= data_seg.len() {
-                            break;
-                        }
-
-                        let bsize =
-                            u16::from_le_bytes([data_seg[pos + 16], data_seg[pos + 17]]) as usize;
-                        let total_size = bsize + 1;
-
-                        // Validate block size constraints
-                        if total_size < BGZF_HEADER_SIZE + BGZF_FOOTER_SIZE
-                            || total_size > 65536
-                            || pos + total_size > file_size
-                        {
-                            pos += 1;
-                            continue;
-                        }
-
-                        // Send to combined decompression/processing stage
-                        if tx_out
-                            .send(BlockInfo {
-                                start_pos: pos,
-                                total_size,
-                            })
-                            .is_err()
-                        {
-                            break; // Channel closed
-                        }
-
-                        pos += total_size;
-                    }
-                });
-                discovery_handles.push(handle);
-            }
+                Ok(block_count)
+            });
 
             // ── STAGE 2: Combined Decompression + Processing (concurrent with discovery) ──
             let results: Result<Vec<FlagIndex>, anyhow::Error> =
@@ -183,10 +138,8 @@ impl IndexingStrategy for RayonExpertStrategy {
                         processing_handles.push(handle);
                     }
 
-                    // Wait for all discovery threads to complete, then close channel
-                    for handle in discovery_handles {
-                        handle.join().unwrap();
-                    }
+                    // Wait for discovery thread to complete, then close channel
+                    discovery_handle.join().unwrap().unwrap();
                     drop(tx_disc); // Now safe to close - all discovery is complete
 
                     // Collect results from processing threads
