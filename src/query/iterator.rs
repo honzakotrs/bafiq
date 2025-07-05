@@ -1,4 +1,4 @@
-#![allow(dead_code)] // Query iterators are infrastructure for future functionality
+// Query iterators for streaming BAM record retrieval with block-based indexes
 
 use crate::query::{QueryEngine, QueryRequest};
 use crate::SerializableIndex;

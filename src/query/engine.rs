@@ -1,4 +1,4 @@
-#![allow(dead_code)] // Query engine is infrastructure for future functionality
+// Query engine for efficient BAM record retrieval using block-based indexes
 
 use crate::index::format::{IndexAccessor, SerializableIndex};
 use crate::{FlagIndex, FLAG_MASK, N_FLAGS};

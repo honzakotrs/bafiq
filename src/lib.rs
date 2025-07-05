@@ -278,6 +278,7 @@ impl FlagIndex {
     }
 
     /// Retrieve reads from BAM file that match the criteria and write to output
+    /// **PERFORMANCE OPTIMIZED**: Uses block-based index for efficient random access
     pub fn retrieve_reads<P: AsRef<Path>>(
         &self,
         bam_path: P,
@@ -286,14 +287,54 @@ impl FlagIndex {
         writer: &mut Writer,
     ) -> Result<()> {
         use rust_htslib::bam::Read;
+
+        // Get block IDs that contain matching reads
+        let block_ids = self.blocks_for(required_bits, forbidden_bits);
+
+        if block_ids.is_empty() {
+            return Ok(()); // No matching reads
+        }
+
         let mut reader = rust_htslib::bam::Reader::from_path(&bam_path)?;
+        let mut record = rust_htslib::bam::Record::new();
 
-        for result in reader.records() {
-            let record = result?;
-            let flags = record.flags();
+        eprintln!("Scanning {} blocks for matching reads...", block_ids.len());
 
-            if (flags & required_bits) == required_bits && (flags & forbidden_bits) == 0 {
-                writer.write(&record)?;
+        // Sort blocks for efficient seeking
+        let mut sorted_blocks = block_ids.clone();
+        sorted_blocks.sort();
+
+        // Process each block that contains matching reads
+        for &block_id in &sorted_blocks {
+            let offset = block_id << 16; // Convert block ID to file offset
+            reader.seek(offset)?;
+
+            let mut previous_position = reader.tell();
+
+            // Read all records until we detect we've moved to a different block
+            loop {
+                match reader.read(&mut record) {
+                    Some(Ok(())) => {
+                        let current_position = reader.tell();
+                        let current_block_id = current_position >> 16;
+
+                        // Stop if we've moved to the next block
+                        if current_block_id != block_id {
+                            break;
+                        }
+
+                        // Check if this record matches our criteria
+                        let flags = record.flags();
+                        if (flags & required_bits) == required_bits && (flags & forbidden_bits) == 0
+                        {
+                            writer.write(&record)?;
+                        }
+
+                        previous_position = current_position;
+                    }
+                    Some(Err(e)) => return Err(e.into()),
+                    None => break, // End of file
+                }
             }
         }
 

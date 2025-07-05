@@ -173,24 +173,44 @@ impl SerializableIndex {
     /// Get format information for display
     pub fn get_format_info(&self) -> IndexFormatInfo {
         match &self.format {
-            IndexFormat::Uncompressed(index) => IndexFormatInfo {
-                format_type: "Uncompressed".to_string(),
-                compression_ratio: 1.0,
-                build_time_ms: 0,
-                total_records: index.total_records(),
-                memory_usage_mb: 0.0, // TODO: estimate
-            },
+            IndexFormat::Uncompressed(index) => {
+                // Estimate memory usage: bins + blocks + overhead
+                let num_bins = index.bins().len();
+                let total_blocks: usize = index.bins().iter().map(|bin| bin.blocks.len()).sum();
+                let estimated_size = num_bins * 32 + total_blocks * 16 + 1024; // rough estimate
+
+                IndexFormatInfo {
+                    format_type: "Uncompressed".to_string(),
+                    compression_ratio: 1.0,
+                    build_time_ms: 0,
+                    total_records: index.total_records(),
+                    memory_usage_mb: estimated_size as f64 / 1_048_576.0,
+                }
+            }
             IndexFormat::Compressed {
                 index,
                 build_time_ms,
                 compression_ratio,
             } => {
                 let stats = index.compression_stats();
+                // Get total records from compressed index
+                let total_records = index
+                    .used_flags()
+                    .iter()
+                    .map(|&flag| {
+                        index
+                            .get_bin_blocks(flag)
+                            .iter()
+                            .map(|(_, count)| count)
+                            .sum::<u64>()
+                    })
+                    .sum();
+
                 IndexFormatInfo {
                     format_type: "Multi-level Compressed".to_string(),
                     compression_ratio: *compression_ratio,
                     build_time_ms: *build_time_ms,
-                    total_records: 0, // TODO: get from compressed index
+                    total_records,
                     memory_usage_mb: stats.compressed_size as f64 / 1_048_576.0,
                 }
             }
