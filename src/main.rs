@@ -249,7 +249,7 @@ enum Commands {
         non_duplicates: bool,
     },
 
-    /// Fast count (like samtools view -c) - no index building
+    /// Fast count (like samtools view -c -f 0x4) - no index building
     FastCount {
         /// BAM file to scan
         input: PathBuf,

@@ -13,7 +13,7 @@ faster to extract sequences based on flag combinations.
 - Different strategies are available to choose from while building the index
 ranging from simple single-core sequential to fully paralellized chunking
 approach
-- Performance is measured against baselined samtools view -c with the goal
+- Performance is measured against baselined samtools view -c -f 0x4 with the goal
 of being faster leveraging rust language features and ecosystem
 
 ## Stack
