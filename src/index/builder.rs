@@ -52,14 +52,10 @@ pub enum BuildStrategy {
     RayonStreamingOptimized,
     /// EXTREME PERFORMANCE - 3-stage pipeline with parallel discovery, NUMA-aware, vectorized processing
     // RayonStreamingUltraOptimized, // Temporarily disabled
-    /// Direct libdeflate-sys for maximum decompression performance with rayon streaming
-    RayonSysStreamingOptimized,
     /// Memory access pattern optimization with vectorized processing
     RayonMemoryOptimized,
     /// Wait-free processing to eliminate the 51% __psynch_cvwait bottleneck
     RayonWaitFree,
-    /// High-parallelism with targeted wait reduction (optimal balance)
-    RayonOptimalParallel,
     /// Ultra-optimized strategy targeting 1-2s execution time
     /// Incorporates: SIMD vectorization, cache optimization, NUMA awareness, memory prefetching
     RayonUltraPerformance,
@@ -117,17 +113,11 @@ impl IndexBuilder {
             // BuildStrategy::RayonStreamingUltraOptimized => {
             //     self.build_rayon_streaming_ultra_optimized(path_str)
             // }
-            BuildStrategy::RayonSysStreamingOptimized => {
-                self.build_rayon_sys_streaming_optimized(path_str)
-            }
             BuildStrategy::RayonMemoryOptimized => {
                 self.build_rayon_memory_optimized(path_str)
             }
             BuildStrategy::RayonWaitFree => {
                 RayonWaitFreeStrategy.build(path_str)
-            }
-            BuildStrategy::RayonOptimalParallel => {
-                self.build_rayon_optimal_parallel(path_str)
             }
             BuildStrategy::RayonUltraPerformance => {
                 self.build_rayon_ultra_performance(path_str)
@@ -967,156 +957,7 @@ impl IndexBuilder {
         .unwrap()
     }
 
-    /// **RAYON + LIBDEFLATE-SYS STRATEGY** - Direct system library decompression
-    /// 
-    /// Based on proven rayon-streaming-optimized but uses libdeflate-sys for:
-    /// - Direct FFI calls to libdeflate C library (no Rust wrapper overhead)
-    /// - Maximum decompression performance with system-optimized assembly
-    /// - Lower memory allocation overhead
-    /// - Better CPU cache utilization
-    pub fn build_rayon_sys_streaming_optimized(&self, bam_path: &str) -> Result<FlagIndex> {
-        let file = File::open(bam_path)?;
-        let mmap = unsafe { Mmap::map(&file)? };
-        let data = Arc::new(mmap);
-        
-        // Lock-free concurrent queue for streaming blocks to workers
-        let work_queue = Arc::new(crossbeam::queue::SegQueue::new());
-        let discovery_done = Arc::new(AtomicBool::new(false));
-        let num_threads = rayon::current_num_threads();
-        
-        thread::scope(|s| {
-            // Discovery thread: stream blocks as they're found
-            let queue_producer = Arc::clone(&work_queue);
-            let data_producer = Arc::clone(&data);
-            let done_flag = Arc::clone(&discovery_done);
-            
-            s.spawn(move |_| -> Result<usize> {
-                let mut block_count = 0;
-                let mut pos = 0;
-                let data_len = data_producer.len();
-                
-                while pos < data_len {
-                    if pos + BGZF_HEADER_SIZE > data_len {
-                        break;
-                    }
-                    
-                    let header = &data_producer[pos..pos + BGZF_HEADER_SIZE];
-                    if header[0..2] != [0x1f, 0x8b] {
-                        return Err(anyhow!("Invalid GZIP header at position {}", pos));
-                    }
-                    
-                    let bsize = u16::from_le_bytes([header[16], header[17]]) as usize;
-                    let total_size = bsize + 1;
-                    
-                    if total_size < BGZF_HEADER_SIZE + BGZF_FOOTER_SIZE || total_size > 65536 {
-                        return Err(anyhow!("Invalid BGZF block size: {}", total_size));
-                    }
-                    
-                    if pos + total_size > data_len {
-                        break;
-                    }
-                    
-                    // Stream block immediately to work queue
-                    let block_info = BlockInfo {
-                        start_pos: pos,
-                        total_size,
-                    };
-                    queue_producer.push(block_info);
-                    
-                    pos += total_size;
-                    block_count += 1;
-                }
-                
-                // Signal discovery completion
-                done_flag.store(true, Ordering::Release);
-                Ok(block_count)
-            });
-            
-            // Processing: Use rayon to spawn workers that pull from queue
-            let local_indexes: Vec<FlagIndex> = (0..num_threads)
-                .into_par_iter()
-                .map(|_worker_id| -> Result<FlagIndex> {
-                    let mut local_index = FlagIndex::new();
-                    let queue_consumer = Arc::clone(&work_queue);
-                    let done_flag = Arc::clone(&discovery_done);
-                    let data_worker = Arc::clone(&data);
-                    
-                    // Thread-local buffers for libdeflate-sys
-                    thread_local! {
-                        static BUFFER: std::cell::RefCell<Vec<u8>> = std::cell::RefCell::new(vec![0u8; BGZF_BLOCK_MAX_SIZE]);
-                        static SYS_DECOMPRESSOR: std::cell::RefCell<Option<*mut libdeflate_sys::libdeflate_decompressor>> = std::cell::RefCell::new(None);
-                    }
-                    
-                    // Worker loop: pull blocks from queue and process
-                    loop {
-                        if let Some(block_info) = queue_consumer.pop() {
-                            // Process block using libdeflate-sys
-                            let block = &data_worker[block_info.start_pos..block_info.start_pos + block_info.total_size];
-                            let block_offset = block_info.start_pos as i64;
-                            
-                            let result = BUFFER.with(|buf| {
-                                SYS_DECOMPRESSOR.with(|decomp_cell| {
-                                    let mut buffer = buf.borrow_mut();
-                                    let mut decomp_opt = decomp_cell.borrow_mut();
-                                    
-                                    // Initialize decompressor if not already done
-                                    let decompressor = match *decomp_opt {
-                                        Some(ptr) => ptr,
-                                        None => {
-                                            let ptr = unsafe { libdeflate_sys::libdeflate_alloc_decompressor() };
-                                            *decomp_opt = Some(ptr);
-                                            ptr
-                                        }
-                                    };
-                                    
-                                    extract_flags_from_block_sys(
-                                        block,
-                                        &mut local_index,
-                                        block_offset,
-                                        &mut buffer,
-                                        decompressor,
-                                    )
-                                })
-                            });
-                            
-                            if let Err(e) = result {
-                                eprintln!("Worker {}: Block processing error: {}", _worker_id, e);
-                                continue;
-                            }
-                        } else if done_flag.load(Ordering::Acquire) {
-                            // No more work and discovery is done - double-check queue is empty
-                            if queue_consumer.is_empty() {
-                                break;
-                            }
-                        } else {
-                            // No work available, but discovery still running - yield to avoid spinning
-                            std::thread::yield_now();
-                        }
-                    }
-                    
-                    // Clean up libdeflate-sys decompressor
-                    SYS_DECOMPRESSOR.with(|decomp_cell| {
-                        let mut decomp_opt = decomp_cell.borrow_mut();
-                        if let Some(ptr) = *decomp_opt {
-                            unsafe { libdeflate_sys::libdeflate_free_decompressor(ptr) };
-                            *decomp_opt = None;
-                        }
-                    });
-                    
-                    Ok(local_index)
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            
-            // Merge results from all workers
-            let mut final_index = FlagIndex::new();
-            for local_index in local_indexes {
-                final_index.merge(local_index);
-            }
-            
-            Ok(final_index)
-        })
-        .unwrap()
-    }
+    // RayonSysStreamingOptimized strategy has been removed - libdeflate-sys approach eliminated
 
     /// **MEMORY ACCESS OPTIMIZATION STRATEGY** - Vectorized record processing
     /// 
@@ -1255,130 +1096,7 @@ impl IndexBuilder {
 
 
 
-    /// High-parallelism with targeted wait reduction (optimal balance)
-    pub fn build_rayon_optimal_parallel(&self, bam_path: &str) -> Result<FlagIndex> {
-        let file = File::open(bam_path)?;
-        let mmap = unsafe { Mmap::map(&file)? };
-        let data = Arc::new(mmap);
-        
-        // Lock-free concurrent queue for streaming blocks to workers
-        let work_queue = Arc::new(crossbeam::queue::SegQueue::new());
-        let discovery_done = Arc::new(AtomicBool::new(false));
-        let num_threads = rayon::current_num_threads();
-        
-        thread::scope(|s| {
-            // Discovery thread: stream blocks as they're found
-            let queue_producer = Arc::clone(&work_queue);
-            let data_producer = Arc::clone(&data);
-            let done_flag = Arc::clone(&discovery_done);
-            
-            s.spawn(move |_| -> Result<usize> {
-                let mut block_count = 0;
-                let mut pos = 0;
-                let data_len = data_producer.len();
-                
-                while pos < data_len {
-                    if pos + BGZF_HEADER_SIZE > data_len {
-                        break;
-                    }
-                    
-                    let header = &data_producer[pos..pos + BGZF_HEADER_SIZE];
-                    if header[0..2] != [0x1f, 0x8b] {
-                        return Err(anyhow!("Invalid GZIP header at position {}", pos));
-                    }
-                    
-                    let bsize = u16::from_le_bytes([header[16], header[17]]) as usize;
-                    let total_size = bsize + 1;
-                    
-                    if total_size < BGZF_HEADER_SIZE + BGZF_FOOTER_SIZE || total_size > 65536 {
-                        return Err(anyhow!("Invalid BGZF block size: {}", total_size));
-                    }
-                    
-                    if pos + total_size > data_len {
-                        break;
-                    }
-                    
-                    // Stream block immediately to work queue
-                    let block_info = BlockInfo {
-                        start_pos: pos,
-                        total_size,
-                    };
-                    queue_producer.push(block_info);
-                    
-                    pos += total_size;
-                    block_count += 1;
-                }
-                
-                // Signal discovery completion
-                done_flag.store(true, Ordering::Release);
-                Ok(block_count)
-            });
-            
-            // Processing: Use rayon to spawn workers that pull from queue
-            let local_indexes: Vec<FlagIndex> = (0..num_threads)
-                .into_par_iter()
-                .map(|_worker_id| -> Result<FlagIndex> {
-                    let mut local_index = FlagIndex::new();
-                    let queue_consumer = Arc::clone(&work_queue);
-                    let done_flag = Arc::clone(&discovery_done);
-                    let data_worker = Arc::clone(&data);
-                    
-                    // Thread-local buffers for efficiency
-                    thread_local! {
-                        static BUFFER: std::cell::RefCell<Vec<u8>> = std::cell::RefCell::new(vec![0u8; BGZF_BLOCK_MAX_SIZE]);
-                        static DECOMPRESSOR: std::cell::RefCell<Decompressor> = std::cell::RefCell::new(Decompressor::new());
-                    }
-                    
-                    // Worker loop: pull blocks from queue and process
-                    loop {
-                        if let Some(block_info) = queue_consumer.pop() {
-                            // Process block using thread-local buffers
-                            let block = &data_worker[block_info.start_pos..block_info.start_pos + block_info.total_size];
-                            let block_offset = block_info.start_pos as i64;
-                            
-                            let result = BUFFER.with(|buf| {
-                                DECOMPRESSOR.with(|decomp| {
-                                    let mut buffer = buf.borrow_mut();
-                                    let mut decompressor = decomp.borrow_mut();
-                                    extract_flags_from_block_pooled(
-                                        block,
-                                        &mut local_index,
-                                        block_offset,
-                                        &mut buffer,
-                                        &mut decompressor,
-                                    )
-                                })
-                            });
-                            
-                            if let Err(e) = result {
-                                eprintln!("Worker {}: Block processing error: {}", _worker_id, e);
-                                continue;
-                            }
-                        } else if done_flag.load(Ordering::Acquire) {
-                            // No more work and discovery is done - double-check queue is empty
-                            if queue_consumer.is_empty() {
-                                break;
-                            }
-                        } else {
-                            // No work available, but discovery still running - yield to avoid spinning
-                            std::thread::yield_now();
-                        }
-                    }
-                    
-                    Ok(local_index)
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            
-            // Merge results from all workers
-            let mut final_index = FlagIndex::new();
-            for local_index in local_indexes {
-                final_index.merge(local_index);
-            }
-            
-            Ok(final_index)
-        })
-        .unwrap()
-    }
+    // RayonOptimalParallel strategy has been removed - was duplicate of RayonStreamingOptimized
 
     /// Ultra-optimized strategy targeting 1-2s execution time
     /// Incorporates: SIMD vectorization, cache optimization, NUMA awareness, memory prefetching
@@ -1705,62 +1423,7 @@ impl IndexBuilder {
 
 
 
-/// **LIBDEFLATE-SYS FLAG EXTRACTION** - Direct system library decompression
-/// 
-/// High-performance version using libdeflate-sys for direct FFI calls:
-/// - No Rust wrapper overhead 
-/// - Direct C library calls for maximum performance
-/// - System-optimized assembly code paths
-/// - Lower allocation overhead than libdeflater wrapper
-pub fn extract_flags_from_block_sys(
-    block: &[u8],
-    index: &mut FlagIndex,
-    block_offset: i64,
-    output_buffer: &mut Vec<u8>,
-    decompressor: *mut libdeflate_sys::libdeflate_decompressor,
-) -> Result<usize> {
-    let mut record_count = 0;
-    let block_id = block_offset;
-
-    // Ensure output buffer is large enough
-    if output_buffer.len() < BGZF_BLOCK_MAX_SIZE {
-        output_buffer.resize(BGZF_BLOCK_MAX_SIZE, 0);
-    }
-
-    // Direct libdeflate-sys decompression
-    let mut actual_out_size = 0usize;
-    let result = unsafe {
-        libdeflate_sys::libdeflate_gzip_decompress(
-            decompressor,
-            block.as_ptr() as *const std::ffi::c_void,
-            block.len(),
-            output_buffer.as_mut_ptr() as *mut std::ffi::c_void,
-            output_buffer.len(),
-            &mut actual_out_size as *mut usize,
-        )
-    };
-
-    // Check decompression result
-    if result != libdeflate_sys::libdeflate_result_LIBDEFLATE_SUCCESS {
-        return Err(anyhow!("libdeflate-sys decompression failed with code: {}", result));
-    }
-
-    // Skip BAM header blocks (they don't contain read records)
-    if actual_out_size >= 4 && &output_buffer[0..4] == b"BAM\x01" {
-        return Ok(0);
-    }
-
-    // Use the existing optimized record parsing
-    extract_flags_from_decompressed_simd_optimized(
-        output_buffer,
-        actual_out_size,
-        index,
-        block_id,
-        &mut record_count,
-    )?;
-
-    Ok(record_count)
-}
+// extract_flags_from_block_sys function has been removed with RayonSysStreamingOptimized strategy
 
 
 

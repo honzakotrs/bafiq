@@ -32,9 +32,6 @@ pub enum CliStrategy {
     /// **EXTREME PERFORMANCE** - 3-stage pipeline with parallel discovery (TARGET: 2-3x speedup) [TEMPORARILY DISABLED]
     // #[value(name = "rayon-streaming-ultra-optimized")]
     // RayonStreamingUltraOptimized,
-    /// Direct libdeflate-sys system library for maximum decompression performance
-    #[value(name = "rayon-sys-streaming-optimized")]
-    RayonSysStreamingOptimized,
     /// Memory access optimization with vectorized record processing
     #[value(name = "rayon-memory-optimized")]
     RayonMemoryOptimized,
@@ -62,7 +59,6 @@ impl From<CliStrategy> for BuildStrategy {
             // CliStrategy::RayonStreamingUltraOptimized => {
             //     BuildStrategy::RayonStreamingUltraOptimized
             // }
-            CliStrategy::RayonSysStreamingOptimized => BuildStrategy::RayonSysStreamingOptimized,
             CliStrategy::RayonMemoryOptimized => BuildStrategy::RayonMemoryOptimized,
             CliStrategy::RayonWaitFree => BuildStrategy::RayonWaitFree,
             CliStrategy::RayonUltraPerformance => BuildStrategy::RayonUltraPerformance,

@@ -471,11 +471,7 @@ fn simple_benchmarks() -> Result<()> {
             builder.build(path)
         })?;
 
-    let optimized = run_benchmark_with_monitoring("optimized", &test_bam, |path| {
-        use bafiq::{BuildStrategy, IndexBuilder};
-        let builder = IndexBuilder::with_strategy(BuildStrategy::Optimized);
-        builder.build(path)
-    })?;
+    // Optimized strategy has been removed - was duplicate of ParallelChunkStreaming
 
     let rayon_optimized = run_benchmark_with_monitoring("rayon_optimized", &test_bam, |path| {
         use bafiq::{BuildStrategy, IndexBuilder};
@@ -497,13 +493,6 @@ fn simple_benchmarks() -> Result<()> {
     //         builder.build(path)
     //     })?;
 
-    let rayon_sys_streaming_optimized =
-        run_benchmark_with_monitoring("rayon_sys_streaming_optimized", &test_bam, |path| {
-            use bafiq::{BuildStrategy, IndexBuilder};
-            let builder = IndexBuilder::with_strategy(BuildStrategy::RayonSysStreamingOptimized);
-            builder.build(path)
-        })?;
-
     let rayon_memory_optimized =
         run_benchmark_with_monitoring("rayon_memory_optimized", &test_bam, |path| {
             use bafiq::{BuildStrategy, IndexBuilder};
@@ -522,13 +511,6 @@ fn simple_benchmarks() -> Result<()> {
         let builder = IndexBuilder::with_strategy(BuildStrategy::Sequential);
         builder.build(path)
     })?;
-
-    let rayon_optimal_parallel =
-        run_benchmark_with_monitoring("rayon_optimal_parallel", &test_bam, |path| {
-            use bafiq::{BuildStrategy, IndexBuilder};
-            let builder = IndexBuilder::with_strategy(BuildStrategy::RayonOptimalParallel);
-            builder.build(path)
-        })?;
 
     let rayon_ultra_performance =
         run_benchmark_with_monitoring("rayon_ultra_performance", &test_bam, |path| {
@@ -553,21 +535,15 @@ fn simple_benchmarks() -> Result<()> {
         ("streaming", &streaming),
         ("chunk_streaming", &chunk_streaming),
         ("parallel_chunk_streaming", &parallel_chunk_streaming),
-        ("optimized", &optimized),
         ("rayon_optimized", &rayon_optimized),
         ("rayon_streaming_optimized", &rayon_streaming_optimized),
         // (
         //     "rayon_streaming_ultra_optimized",
         //     &rayon_streaming_ultra_optimized,
         // ),
-        (
-            "rayon_sys_streaming_optimized",
-            &rayon_sys_streaming_optimized,
-        ),
         ("rayon_memory_optimized", &rayon_memory_optimized),
         ("rayon_wait_free", &rayon_wait_free),
         ("sequential", &sequential),
-        ("rayon_optimal_parallel", &rayon_optimal_parallel),
         ("rayon_ultra_performance", &rayon_ultra_performance),
         ("rayon_expert", &rayon_expert),
     ];
@@ -958,15 +934,7 @@ fn criterion_benchmarks(c: &mut Criterion) {
         },
     );
 
-    // Benchmark the optimized approach (crossbeam-channel + rayon)
-    benchmark_cold_start(&mut group, "optimized", &test_bam, |file_path| {
-        use bafiq::{BuildStrategy, IndexBuilder};
-        let builder = IndexBuilder::with_strategy(BuildStrategy::Optimized);
-        let index = builder
-            .build(file_path)
-            .expect("Failed to build index with optimized approach");
-        index.total_records()
-    });
+    // Optimized strategy has been removed - was duplicate of ParallelChunkStreaming
 
     // Benchmark the Rayon-optimized approach (current default)
     benchmark_cold_start(&mut group, "rayon_optimized", &test_bam, |file_path| {
@@ -1008,20 +976,7 @@ fn criterion_benchmarks(c: &mut Criterion) {
     //     },
     // );
 
-    // Benchmark the sys streaming optimized approach (direct libdeflate-sys)
-    benchmark_cold_start(
-        &mut group,
-        "rayon_sys_streaming_optimized",
-        &test_bam,
-        |file_path| {
-            use bafiq::{BuildStrategy, IndexBuilder};
-            let builder = IndexBuilder::with_strategy(BuildStrategy::RayonSysStreamingOptimized);
-            let index = builder
-                .build(file_path)
-                .expect("Failed to build index with RayonSysStreamingOptimized approach");
-            index.total_records()
-        },
-    );
+    // RayonSysStreamingOptimized strategy has been removed
 
     // Benchmark the memory optimized approach (vectorized processing)
     benchmark_cold_start(
