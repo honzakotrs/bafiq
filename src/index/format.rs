@@ -323,8 +323,18 @@ impl IndexManager {
         }
     }
 
-    /// Load index with automatic building and saving
+    /// Load index with automatic building and saving (defaults to uncompressed)
     pub fn load_or_build(&self, bam_path: &str, force_rebuild: bool) -> Result<SerializableIndex> {
+        self.load_or_build_with_compression(bam_path, force_rebuild, false)
+    }
+
+    /// Load index with automatic building and saving with compression option
+    pub fn load_or_build_with_compression(
+        &self,
+        bam_path: &str,
+        force_rebuild: bool,
+        use_compression: bool,
+    ) -> Result<SerializableIndex> {
         let index_path = self.get_index_path(bam_path);
 
         // Try to load from saved index if not forcing rebuild
@@ -363,19 +373,21 @@ impl IndexManager {
 
         let build_time_ms = start_time.elapsed().as_millis() as u64;
 
-        // Create compressed version
-        eprintln!("Compressing index...");
-        let compressed_index = CompressedFlagIndex::from_uncompressed(&uncompressed_index)?;
-
-        // Create serializable version
-        let serializable =
-            SerializableIndex::from_compressed(compressed_index, bam_path, build_time_ms)?;
+        // Create serializable version - compressed only if requested
+        let serializable = if use_compression {
+            eprintln!("Compressing index...");
+            let compressed_index = CompressedFlagIndex::from_uncompressed(&uncompressed_index)?;
+            SerializableIndex::from_compressed(compressed_index, bam_path, build_time_ms)?
+        } else {
+            SerializableIndex::from_uncompressed(uncompressed_index, bam_path)?
+        };
 
         // Save index
         if let Err(e) = serializable.save_to_file(&index_path) {
             eprintln!("Failed to save index: {}", e);
         } else {
-            eprintln!("Index saved: {}", index_path);
+            let format_info = serializable.get_format_info();
+            eprintln!("Index saved: {} ({})", index_path, format_info.format_type);
         }
 
         Ok(serializable)

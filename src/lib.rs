@@ -21,7 +21,7 @@ mod query;
 pub use index::{
     builder::{BuildStrategy, IndexBuilder},
     compressed::CompressedFlagIndex,
-    format::{IndexManager, SerializableIndex},
+    format::{IndexAccessor, IndexManager, SerializableIndex},
 };
 
 /// Information about the distribution of reads in one 16-bit flag bin
