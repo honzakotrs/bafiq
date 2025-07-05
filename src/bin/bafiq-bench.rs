@@ -38,9 +38,7 @@ fn clear_file_system_cache() -> Result<()> {
         if let Ok(result) = output {
             if !result.status.success() {
                 if env::var("BAFIQ_BENCH_DEBUG").is_ok() {
-                    eprintln!(
-                        "Warning: Could not clear Linux page cache (try running with sudo)"
-                    );
+                    eprintln!("Warning: Could not clear Linux page cache (try running with sudo)");
                 }
             }
         }
@@ -102,7 +100,7 @@ where
     F: FnMut(&str) -> Result<FlagIndex>,
 {
     if env::var("BAFIQ_BENCH_DEBUG").is_ok() {
-        println!("🧊 Running cold start benchmark: {}", name);
+        println!("Running cold start benchmark: {}", name);
     }
 
     // Clear caches
@@ -140,7 +138,7 @@ fn main() -> Result<()> {
     let input_file = &args[1];
 
     println!("Flag Index Building Benchmark: {}", input_file);
-    println!("🧊 Using cold start conditions (realistic first-time usage)");
+    println!("Using cold start conditions (realistic first-time usage)");
 
     if env::var("BAFIQ_BENCH_DEBUG").is_ok() {
         println!("Debug mode enabled - detailed logging active");

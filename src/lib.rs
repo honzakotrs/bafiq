@@ -9,7 +9,7 @@ use std::path::Path;
 
 // Constants for flag handling
 pub const FLAG_MASK: u16 = 0xFFFF; // All 16 bits are valid for SAM flags
-pub const N_FLAGS: usize = 65536;   // 2^16 possible flag combinations
+pub const N_FLAGS: usize = 65536; // 2^16 possible flag combinations
 
 pub mod benchmark;
 mod bgzf;
@@ -117,8 +117,10 @@ impl FlagIndex {
                 existing_bin.total_reads += other_bin.total_reads;
                 // Merge block summaries
                 for (block_id, count) in other_bin.blocks {
-                    if let Some((_, existing_count)) =
-                        existing_bin.blocks.iter_mut().find(|(id, _)| *id == block_id)
+                    if let Some((_, existing_count)) = existing_bin
+                        .blocks
+                        .iter_mut()
+                        .find(|(id, _)| *id == block_id)
                     {
                         *existing_count += count;
                     } else {
@@ -231,11 +233,7 @@ impl FlagIndex {
         println!(
             "   Mismatched bins: {} {}",
             mismatched_bins,
-            if mismatched_bins == 0 {
-                "PASS"
-            } else {
-                "WARN"
-            }
+            if mismatched_bins == 0 { "PASS" } else { "WARN" }
         );
 
         // Functional equivalency: same totals + high block overlap + few mismatches
@@ -314,8 +312,7 @@ impl FlagIndex {
     /// Load index from file
     pub fn from_file(path: &Path) -> Result<Self> {
         let file = File::open(path)?;
-        bincode::deserialize_from(file)
-            .map_err(|e| anyhow!("Failed to deserialize index: {}", e))
+        bincode::deserialize_from(file).map_err(|e| anyhow!("Failed to deserialize index: {}", e))
     }
 
     /// Get access to bins (for advanced use cases)
@@ -342,15 +339,15 @@ mod tests {
     #[test]
     fn test_flag_index_basic() {
         let mut index = FlagIndex::new();
-        
+
         // Add some test records
         index.add_record_at_block(0x4, 100); // unmapped
         index.add_record_at_block(0x0, 100); // mapped
         index.add_record_at_block(0x4, 101); // unmapped
         index.add_record_at_block(0x40, 102); // first in pair
-        
+
         assert_eq!(index.total_records(), 4);
-        
+
         // Test counting
         assert_eq!(index.count(0x4, 0x0), 2); // unmapped reads
         assert_eq!(index.count(0x0, 0x4), 2); // mapped reads only (0x0 and 0x40)
@@ -363,13 +360,13 @@ mod tests {
         let mut index1 = FlagIndex::new();
         index1.add_record_at_block(0x4, 100);
         index1.add_record_at_block(0x0, 100);
-        
+
         let mut index2 = FlagIndex::new();
         index2.add_record_at_block(0x4, 101);
         index2.add_record_at_block(0x40, 102);
-        
+
         index1.merge(index2);
-        
+
         assert_eq!(index1.total_records(), 4);
         assert_eq!(index1.count(0x4, 0x0), 2); // unmapped reads from both indexes
     }
@@ -377,14 +374,14 @@ mod tests {
     #[test]
     fn test_blocks_for_query() {
         let mut index = FlagIndex::new();
-        
+
         index.add_record_at_block(0x4, 100); // unmapped in block 100
         index.add_record_at_block(0x0, 200); // mapped in block 200
         index.add_record_at_block(0x4, 300); // unmapped in block 300
-        
+
         let blocks = index.blocks_for(0x4, 0x0); // blocks with unmapped reads
         assert_eq!(blocks, vec![100, 300]);
-        
+
         let blocks = index.blocks_for(0x0, 0x4); // blocks with mapped reads only
         assert_eq!(blocks, vec![200]);
     }
@@ -392,14 +389,14 @@ mod tests {
     #[test]
     fn test_flag_summary() {
         let mut index = FlagIndex::new();
-        
+
         index.add_record_at_block(0x4, 100);
         index.add_record_at_block(0x4, 101);
         index.add_record_at_block(0x0, 102);
-        
+
         let summary = index.get_flag_summary();
         assert_eq!(summary.len(), 2); // Two different flag combinations
-        
+
         // Should have 2 unmapped (0x4) and 1 mapped (0x0)
         let summary_map: HashMap<u16, u64> = summary.into_iter().collect();
         assert_eq!(summary_map.get(&0x4), Some(&2));
@@ -411,14 +408,14 @@ mod tests {
         let mut index1 = FlagIndex::new();
         index1.add_record_at_block(0x4, 100);
         index1.add_record_at_block(0x0, 101);
-        
+
         let mut index2 = FlagIndex::new();
         index2.add_record_at_block(0x0, 101);
         index2.add_record_at_block(0x4, 100);
-        
+
         // Same data, different order - should be equivalent
         assert!(index1.is_equivalent_to(&index2));
-        
+
         // Add different data to index2
         index2.add_record_at_block(0x40, 102);
         assert!(!index1.is_equivalent_to(&index2));
