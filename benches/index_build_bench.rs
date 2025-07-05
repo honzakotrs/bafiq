@@ -506,11 +506,21 @@ fn simple_benchmarks() -> Result<()> {
         builder.build(path)
     })?;
 
-    let sequential = run_benchmark_with_monitoring("sequential", &test_bam, |path| {
-        use bafiq::{BuildStrategy, IndexBuilder};
-        let builder = IndexBuilder::with_strategy(BuildStrategy::Sequential);
-        builder.build(path)
-    })?;
+    // MUTED: Sequential strategy is too slow for routine benchmarking
+    // Set BAFIQ_BENCH_SEQUENTIAL=1 to enable sequential benchmarking
+    let sequential = if env::var("BAFIQ_BENCH_SEQUENTIAL").is_ok() {
+        Some(run_benchmark_with_monitoring(
+            "sequential",
+            &test_bam,
+            |path| {
+                use bafiq::{BuildStrategy, IndexBuilder};
+                let builder = IndexBuilder::with_strategy(BuildStrategy::Sequential);
+                builder.build(path)
+            },
+        )?)
+    } else {
+        None
+    };
 
     let rayon_ultra_performance =
         run_benchmark_with_monitoring("rayon_ultra_performance", &test_bam, |path| {
@@ -529,7 +539,7 @@ fn simple_benchmarks() -> Result<()> {
     let samtools_result = run_simple_samtools_benchmark(&test_bam)?;
 
     // Store all results for table display
-    let results = vec![
+    let mut results = vec![
         ("rust-htslib", &rust_htslib),
         ("parallel", &parallel),
         ("streaming", &streaming),
@@ -543,10 +553,14 @@ fn simple_benchmarks() -> Result<()> {
         // ),
         ("rayon_memory_optimized", &rayon_memory_optimized),
         ("rayon_wait_free", &rayon_wait_free),
-        ("sequential", &sequential),
         ("rayon_ultra_performance", &rayon_ultra_performance),
         ("rayon_expert", &rayon_expert),
     ];
+
+    // Add sequential results if enabled
+    if let Some(ref seq_result) = sequential {
+        results.push(("sequential", seq_result));
+    }
 
     // Performance and Resource Usage Summary Table
     println!("\nPerformance & Resource Usage Summary:");
@@ -1003,15 +1017,18 @@ fn criterion_benchmarks(c: &mut Criterion) {
         index.total_records()
     });
 
-    // Benchmark the sequential approach (single-threaded baseline)
-    benchmark_cold_start(&mut group, "sequential", &test_bam, |file_path| {
-        use bafiq::{BuildStrategy, IndexBuilder};
-        let builder = IndexBuilder::with_strategy(BuildStrategy::Sequential);
-        let index = builder
-            .build(file_path)
-            .expect("Failed to build index with sequential approach");
-        index.total_records()
-    });
+    // MUTED: Sequential approach (single-threaded baseline) - too slow for routine benchmarking
+    // Set BAFIQ_BENCH_SEQUENTIAL=1 to enable sequential benchmarking in Criterion mode
+    if env::var("BAFIQ_BENCH_SEQUENTIAL").is_ok() {
+        benchmark_cold_start(&mut group, "sequential", &test_bam, |file_path| {
+            use bafiq::{BuildStrategy, IndexBuilder};
+            let builder = IndexBuilder::with_strategy(BuildStrategy::Sequential);
+            let index = builder
+                .build(file_path)
+                .expect("Failed to build index with sequential approach");
+            index.total_records()
+        });
+    }
 
     group.finish();
 

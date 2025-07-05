@@ -4,7 +4,6 @@ use crate::FlagIndex;
 use anyhow::{anyhow, Result};
 use libdeflater::Decompressor;
 use memmap2::Mmap;
-use rayon::prelude::*;
 use std::fs::File;
 use std::sync::Arc;
 
@@ -28,8 +27,6 @@ pub struct RayonUltraPerformanceStrategy;
 impl IndexingStrategy for RayonUltraPerformanceStrategy {
     fn build(&self, bam_path: &str) -> Result<FlagIndex> {
         use rayon::prelude::*;
-        use std::sync::atomic::{AtomicBool, Ordering};
-        use std::thread;
         
         let file = File::open(bam_path)?;
         let mmap = unsafe { Mmap::map(&file)? };

@@ -1,5 +1,6 @@
-use crate::bgzf::{BGZF_BLOCK_MAX_SIZE, BGZF_FOOTER_SIZE, BGZF_HEADER_SIZE};
-use crate::index::strategies::{BlockInfo, IndexingStrategy};
+use crate::bgzf::BGZF_BLOCK_MAX_SIZE;
+use crate::index::strategies::shared::discover_blocks_streaming;
+use crate::index::strategies::IndexingStrategy;
 use crate::FlagIndex;
 use anyhow::{anyhow, Result};
 use crossbeam::thread;
@@ -51,40 +52,11 @@ impl IndexingStrategy for RayonMemoryOptimizedStrategy {
             let done_flag = Arc::clone(&discovery_done);
             
             s.spawn(move |_| -> Result<usize> {
-                let mut block_count = 0;
-                let mut pos = 0;
-                let data_len = data_producer.len();
-                
-                while pos < data_len {
-                    if pos + BGZF_HEADER_SIZE > data_len {
-                        break;
-                    }
-                    
-                    let header = &data_producer[pos..pos + BGZF_HEADER_SIZE];
-                    if header[0..2] != [0x1f, 0x8b] {
-                        return Err(anyhow!("Invalid GZIP header at position {}", pos));
-                    }
-                    
-                    let bsize = u16::from_le_bytes([header[16], header[17]]) as usize;
-                    let total_size = bsize + 1;
-                    
-                    if total_size < BGZF_HEADER_SIZE + BGZF_FOOTER_SIZE || total_size > 65536 {
-                        return Err(anyhow!("Invalid BGZF block size: {}", total_size));
-                    }
-                    
-                    if pos + total_size > data_len {
-                        break;
-                    }
-                    
-                    let block_info = BlockInfo {
-                        start_pos: pos,
-                        total_size,
-                    };
+                // Use shared streaming discovery function
+                let block_count = discover_blocks_streaming(&data_producer, |block_info| {
                     queue_producer.push(block_info);
-                    
-                    pos += total_size;
-                    block_count += 1;
-                }
+                    Ok(())
+                })?;
                 
                 done_flag.store(true, Ordering::Release);
                 Ok(block_count)

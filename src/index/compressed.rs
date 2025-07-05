@@ -141,7 +141,7 @@ impl CompressedFlagIndex {
         let mut bin_data_map = HashMap::new();
 
         // Iterate over actual bins with data instead of all possible flag values
-        for (bin_idx, bin) in index.bins().iter().enumerate() {
+        for (_bin_idx, bin) in index.bins().iter().enumerate() {
             if !bin.blocks.is_empty() {
                 let blocks: Vec<i64> = bin.blocks.iter().map(|(block_id, _)| *block_id).collect();
                 let counts: Vec<u64> = bin.blocks.iter().map(|(_, count)| *count).collect();

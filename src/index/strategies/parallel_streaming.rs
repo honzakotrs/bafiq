@@ -2,7 +2,7 @@ use anyhow::Result;
 use crossbeam::channel::unbounded;
 use libdeflater::Decompressor;
 use memmap2::Mmap;
-use rayon::current_num_threads;
+
 use std::fs::File;
 use std::sync::Arc;
 

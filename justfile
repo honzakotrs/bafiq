@@ -17,7 +17,8 @@ bench:
         echo "   Then run: just bench"
     else
         echo "Running fast index build benchmarks..."
-        echo "   Simple timing mode for quick iteration"
+        echo "   Simple timing mode for quick iteration (sequential strategy muted)"
+        echo "   Optional: Set BAFIQ_BENCH_SEQUENTIAL=1 to include slow sequential strategy"
         if [[ "$OSTYPE" == "linux-gnu"* ]]; then
             echo "   On Linux, run with sudo for full cache clearing: sudo -E just bench"
         fi
@@ -34,6 +35,7 @@ bench-full:
     else
         echo "Running detailed Criterion index build benchmarks..."
         echo "   Statistical analysis with confidence intervals + CSV export (slower)"
+        echo "   Sequential strategy muted for faster iteration (set BAFIQ_BENCH_SEQUENTIAL=1 to include)"
         if [[ "$OSTYPE" == "linux-gnu"* ]]; then
             echo "   On Linux, run with sudo for full cache clearing: sudo -E just bench-full"
         fi

@@ -1,7 +1,7 @@
 use crate::bgzf::{BGZF_BLOCK_MAX_SIZE, BGZF_FOOTER_SIZE, BGZF_HEADER_SIZE};
 use crate::FlagIndex;
 use anyhow::{anyhow, Result};
-use crossbeam::channel::{bounded, unbounded, Receiver, Sender};
+use crossbeam::channel::unbounded;
 use crossbeam::thread;
 use libdeflater::Decompressor;
 use memmap2::Mmap;
@@ -9,7 +9,7 @@ use rayon::prelude::*;
 use std::fs::File;
 
 use std::path::Path;
-use std::ptr;
+
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -17,8 +17,7 @@ use std::thread as std_thread;
 
 // Import strategies
 use crate::index::strategies::shared::{
-    count_flags_in_block_optimized, discover_blocks_fast, extract_flags_from_block_pooled,
-    extract_flags_from_decompressed_simd_optimized,
+    count_flags_in_block_optimized, extract_flags_from_decompressed_simd_optimized,
 };
 use crate::index::strategies::{
     chunk_streaming::ChunkStreamingStrategy, htslib::HtsLibStrategy,
