@@ -364,7 +364,7 @@ impl IndexManager {
         if let Err(e) = serializable.save_to_file(&index_path) {
             eprintln!("Failed to save index: {}", e);
         } else {
-            eprintln!("💾 Index saved: {}", index_path);
+            eprintln!("Index saved: {}", index_path);
         }
 
         Ok(serializable)

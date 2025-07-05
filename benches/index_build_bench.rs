@@ -62,7 +62,7 @@ fn report_criterion_resource_usage() {
                 .collect();
             memory_ranking.sort_by_key(|(_, memory)| *memory);
 
-            println!("\n💾 Memory Efficiency (Criterion):");
+            println!("\nMemory Efficiency (Criterion):");
             for (i, (name, memory)) in memory_ranking.iter().take(3).enumerate() {
                 println!(
                     "   {}. {} - {}",
@@ -618,7 +618,7 @@ fn simple_benchmarks() -> Result<()> {
     println!("{}", "=".repeat(120));
 
     // Memory efficiency analysis
-    println!("\n💾 Memory Efficiency Analysis:");
+    println!("\nMemory Efficiency Analysis:");
     let mut memory_efficiency: Vec<_> = results
         .iter()
         .map(|(name, result)| (name, result.resources.peak_memory_bytes))
