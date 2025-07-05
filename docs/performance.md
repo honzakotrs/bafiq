@@ -2,7 +2,7 @@ Based on your need to outperform samtools view -c by 2×, your current libdeflat
 
 ⸻
 
-🚀 High-Speed Rust Stack for BAM Processing
+High-Speed Rust Stack for BAM Processing
 
 Layer	Library / Tool	Why it’s chosen
 1. File I/O (Memory-efficient, fast)	memmap2 or std::fs::File + BufReader::with_capacity(1MB)	High throughput access, low syscalls, OS paging benefits.
@@ -16,7 +16,7 @@ Layer	Library / Tool	Why it’s chosen
 
 ⸻
 
-📊 Targeted Throughput Gains (Per Layer)
+Targeted Throughput Gains (Per Layer)
 
 Layer	Optimization	Expected Gain
 BGZF block parallelization	Split + parallel decompress	+1.5–2.0×
@@ -63,7 +63,7 @@ CRC skipping (if safe)	Inline block handling	+5–10%
 
 ⸻
 
-❌ What to Avoid
+What to Avoid
 
 Don’t use	Reason
 flate2, miniz_oxide	~2× slower than libdeflate
@@ -73,7 +73,7 @@ Allocating new Vec<u8> per block	Use buffer pools or thread-local Vec::with_capa
 
 ⸻
 
-✅ Summary
+Summary
 
 This stack gives you:
 	•	Parallel BGZF decompression using libdeflate in Rust

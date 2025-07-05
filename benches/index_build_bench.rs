@@ -29,7 +29,7 @@ pub fn get_resource_data(strategy_name: &str) -> Option<ResourceStats> {
 fn report_criterion_resource_usage() {
     if let Ok(data) = CRITERION_RESOURCE_DATA.lock() {
         if !data.is_empty() {
-            println!("\n📊 Criterion Resource Usage Summary:");
+            println!("\nCriterion Resource Usage Summary:");
             println!("{}", "=".repeat(100));
             println!(
                 "{:<25} {:>12} {:>12} {:>8} {:>8} {:>8}",
@@ -215,7 +215,7 @@ fn run_benchmark_with_monitoring<F>(
 where
     F: FnMut(&str) -> Result<FlagIndex>,
 {
-    println!("🧊 Running monitored benchmark: {}", name);
+    println!("Running monitored benchmark: {}", name);
 
     // Clear caches
     clear_file_system_cache()?;
@@ -253,39 +253,6 @@ where
         index,
         resources,
     })
-}
-
-/// Enhanced simple benchmark function (backwards compatibility)
-fn run_simple_benchmark_with_index<F>(
-    name: &str,
-    test_bam: &str,
-    mut benchmark_fn: F,
-) -> Result<(Duration, FlagIndex)>
-where
-    F: FnMut(&str) -> Result<FlagIndex>,
-{
-    println!("🧊 Running benchmark: {}", name);
-
-    // Light resource monitoring for simple benchmarks (no cache clearing)
-    let monitor = ResourceMonitor::new()?;
-    monitor.start_monitoring(20)?; // Lighter sampling: 20ms instead of 5-10ms
-
-    let start = Instant::now();
-    let index = benchmark_fn(test_bam)?;
-    let duration = start.elapsed();
-
-    let resources = monitor.stop_monitoring();
-
-    // Store for simple benchmark reporting
-    println!(
-        "   ✅ {} - {}ms, Peak Memory: {}, Avg CPU: {:.1}%",
-        name,
-        duration.as_millis(),
-        ResourceStats::format_memory(resources.peak_memory_bytes),
-        resources.avg_cpu_percent
-    );
-
-    Ok((duration, index))
 }
 
 /// Clear OS file system caches to ensure cold start conditions
@@ -363,7 +330,7 @@ fn run_samtools_count(input_file: &str) -> Result<u64> {
 
 /// Simple samtools benchmark with cold start conditions
 fn run_simple_samtools_benchmark(test_bam: &str) -> Result<(Duration, u64)> {
-    println!("🧊 Running cold start benchmark: samtools view -c");
+    println!("Running cold start benchmark: samtools view -c");
 
     // Clear caches
     clear_file_system_cache()?;
@@ -458,29 +425,6 @@ fn format_size(bytes: u64) -> String {
     } else {
         format!("{:.1} {}", size, UNITS[unit_index])
     }
-}
-
-/// Verify that all flag indexes are equivalent
-fn verify_indexes_equivalent(indexes: &[(&str, &FlagIndex)]) -> Result<bool> {
-    if indexes.len() < 2 {
-        return Ok(true);
-    }
-
-    let (reference_name, reference_index) = indexes[0];
-    let mut all_equivalent = true;
-
-    for (name, index) in &indexes[1..] {
-        println!("   {} vs {}:", reference_name, name);
-
-        if reference_index.is_equivalent_to(index) {
-            // The is_equivalent_to method now handles its own output
-        } else {
-            all_equivalent = false;
-        }
-        println!(); // Add spacing between comparisons
-    }
-
-    Ok(all_equivalent)
 }
 
 /// Simple benchmarks mode (fast development)
@@ -599,7 +543,7 @@ fn simple_benchmarks() -> Result<()> {
     ];
 
     // Performance and Resource Usage Summary Table
-    println!("\n📊 Performance & Resource Usage Summary:");
+    println!("\nPerformance & Resource Usage Summary:");
     println!("{}", "=".repeat(120));
     println!(
         "{:<25} {:>8} {:>12} {:>12} {:>8} {:>8} {:>12} {:>8}",
@@ -662,7 +606,7 @@ fn simple_benchmarks() -> Result<()> {
     }
 
     // Speed analysis
-    println!("\n⚡ Speed Analysis:");
+    println!("\nSpeed Analysis:");
     let mut speed_ranking: Vec<_> = results
         .iter()
         .map(|(name, result)| (name, result.duration))
@@ -695,7 +639,7 @@ fn simple_benchmarks() -> Result<()> {
     }
 
     // Comprehensive index verification (same as before)
-    println!("\n✅ Index Verification:");
+    println!("\nIndex Verification:");
     let first_total = rust_htslib.index.total_records();
     let all_match = results
         .iter()
@@ -703,10 +647,10 @@ fn simple_benchmarks() -> Result<()> {
         && first_total == samtools_result.1;
 
     if all_match {
-        println!("   ✅ All record counts match: {}", first_total);
-        println!("   ✅ samtools verification: {} records", samtools_result.1);
+        println!("   All record counts match: {}", first_total);
+        println!("   samtools verification: {} records", samtools_result.1);
     } else {
-        println!("   ❌ Record count mismatch!");
+        println!("   Record count mismatch!");
         for (name, result) in &results {
             println!("      {}: {}", name, result.index.total_records());
         }
@@ -737,7 +681,7 @@ fn simple_benchmarks() -> Result<()> {
             best_strategy, speedup
         );
     } else {
-        println!("\n⚠️  Performance Gate: FAILED");
+        println!("\n Performance Gate: FAILED");
         println!("   No strategy outperformed rust-htslib baseline");
     }
 
@@ -910,7 +854,7 @@ fn criterion_benchmarks(c: &mut Criterion) {
     };
 
     println!("Criterion Benchmarking with file: {}", test_bam);
-    println!("🧊 Using cold start conditions via cache clearing (3 samples for fast development)");
+    println!("Using cold start conditions via cache clearing (3 samples for fast development)");
 
     if env::var("BAFIQ_BENCH_DEBUG").is_ok() {
         println!("Debug mode enabled");
@@ -1107,26 +1051,6 @@ fn criterion_benchmarks(c: &mut Criterion) {
     report_criterion_resource_usage();
 }
 
-/// Performance benchmarks entry point that chooses between simple and Criterion modes
-fn performance_benchmarks(c: &mut Criterion) {
-    // Check if we should use simple mode for fast development
-    if env::var("BAFIQ_USE_CRITERION").is_err() {
-        // Use simple direct timing for fast development
-        println!("Using simple timing for fast development");
-        println!("For detailed Criterion analysis, run: BAFIQ_USE_CRITERION=1 cargo bench");
-
-        if let Err(e) = simple_benchmarks() {
-            eprintln!("Benchmark failed: {}", e);
-            std::process::exit(1);
-        }
-        return;
-    }
-
-    // Use Criterion for detailed benchmarking
-    println!("Using Criterion for detailed statistical analysis");
-    criterion_benchmarks(c);
-}
-
 // Manual main function handles both simple and Criterion benchmarks
 // No need for criterion_group! macro
 fn main() {
@@ -1145,10 +1069,10 @@ fn main() {
         report_criterion_resource_usage();
     } else {
         // Run simple benchmarks (faster, for development)
-        println!("⚡ Running simple benchmarks (fast development mode)...");
+        println!("Running simple benchmarks (fast development mode)...");
         match simple_benchmarks() {
-            Ok(()) => println!("✅ Simple benchmarks completed successfully"),
-            Err(e) => eprintln!("❌ Simple benchmarks failed: {}", e),
+            Ok(()) => println!("Simple benchmarks completed successfully"),
+            Err(e) => eprintln!("Simple benchmarks failed: {}", e),
         }
     }
 }

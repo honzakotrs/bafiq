@@ -510,7 +510,7 @@ impl IndexBuilder {
             .map_err(|e| anyhow!("Backward producer failed: {:?}", e))??;
 
         eprintln!(
-            "⚡ Dual-direction scan: {} forward + {} backward blocks",
+            "Dual-direction scan: {} forward + {} backward blocks",
             forward_blocks, backward_blocks
         );
 

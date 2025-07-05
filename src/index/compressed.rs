@@ -65,22 +65,22 @@ impl CompressionStats {
     }
 
     pub fn print_analysis(&self) {
-        println!("🗜️ COMPRESSION ANALYSIS RESULTS:");
+        println!("COMPRESSION ANALYSIS RESULTS:");
         println!("{}", "=".repeat(50));
         println!(
-            "📊 Original size: {} bytes ({:.1} MB)",
+            "Original size: {} bytes ({:.1} MB)",
             self.original_size,
             self.original_size as f64 / 1_048_576.0
         );
         println!(
-            "📊 Compressed size: {} bytes ({:.1} MB)",
+            "Compressed size: {} bytes ({:.1} MB)",
             self.compressed_size,
             self.compressed_size as f64 / 1_048_576.0
         );
-        println!("📈 Compression ratio: {:.2}x", self.compression_ratio);
-        println!("📈 Space saved: {:.1}%", self.compression_percentage());
+        println!("Compression ratio: {:.2}x", self.compression_ratio);
+        println!("Space saved: {:.1}%", self.compression_percentage());
         println!();
-        println!("🔍 Breakdown by technique:");
+        println!("Breakdown by technique:");
 
         // Calculate individual technique contributions as percentages of total technique savings
         let total_technique_savings = self.sparsity_savings
@@ -111,28 +111,28 @@ impl CompressionStats {
             );
             println!();
             println!(
-                "📊 Note: Individual technique savings total {} bytes",
+                "Note: Individual technique savings total {} bytes",
                 total_technique_savings
             );
-            println!("📊 Actual file size reduction may differ due to serialization overhead");
+            println!("Actual file size reduction may differ due to serialization overhead");
         } else {
             println!("   • No compression technique savings calculated");
         }
 
         println!();
         println!(
-            "📋 Flag usage: {}/4096 ({:.1}% sparse)",
+            "Flag usage: {}/4096 ({:.1}% sparse)",
             self.total_flags_used,
             (4096 - self.total_flags_used) as f64 / 4096.0 * 100.0
         );
-        println!("📋 Shared literals: {} patterns found", self.total_literals);
+        println!("Shared literals: {} patterns found", self.total_literals);
     }
 }
 
 impl CompressedFlagIndex {
     /// Create a compressed index from a regular FlagIndex using the new compression modules
     pub fn from_uncompressed(index: &FlagIndex) -> Result<Self> {
-        println!("🗜️ Compressing FlagIndex using sparse + delta strategy...");
+        println!("Compressing FlagIndex using sparse + delta strategy...");
 
         // Step 1: Create sparse storage for used flag combinations
         let mut sparse_storage = SparseStorage::from_flag_index(index);
@@ -157,16 +157,16 @@ impl CompressedFlagIndex {
         // - O(n²) complexity makes it impractical for real-world BAM files
         // - Even with optimizations (min 10 blocks, max 100 sequences), still too slow
         // - Delta + sparse compression provides 31% space savings without complexity
-        println!("   ⚡ Skipping dictionary building due to proven scalability issues...");
-        println!("   📊 Dictionary compression analysis: 23GB+ memory usage, O(n²) complexity");
-        println!("   📊 Conclusion: Delta + sparse approach provides sufficient compression");
+        println!("   Skipping dictionary building due to proven scalability issues...");
+        println!("   Dictionary compression analysis: 23GB+ memory usage, O(n²) complexity");
+        println!("   Conclusion: Delta + sparse approach provides sufficient compression");
         let dictionary = DictionaryCompressor::default();
 
         // Step 4: Compress each bin's data using MASSIVELY PARALLEL delta compression
         sparse_storage.ensure_data_capacity();
 
         let total_bins = bin_data_map.len();
-        println!("   🚀 Parallelizing compression of {} bins...", total_bins);
+        println!("   Parallelizing compression of {} bins...", total_bins);
 
         // Progress counter for compression
         let progress_counter = AtomicUsize::new(0);
@@ -212,7 +212,7 @@ impl CompressedFlagIndex {
                 let completed = progress_counter.fetch_add(1, Ordering::Relaxed) + 1;
                 if completed % 10 == 0 || completed == total_bins {
                     println!(
-                        "   📊 Compressed {}/{} bins ({:.1}%)",
+                        "   Compressed {}/{} bins ({:.1}%)",
                         completed,
                         total_bins,
                         (completed as f64 / total_bins as f64) * 100.0
@@ -267,9 +267,9 @@ impl CompressedFlagIndex {
             total_literals: 0, // No dictionary literals
         };
 
-        println!("   ✅ Parallel compression complete!");
+        println!("   Parallel compression complete!");
         println!(
-            "   📊 Compression ratio: {:.2}x ({:.1}% savings)",
+            "   Compression ratio: {:.2}x ({:.1}% savings)",
             compression_stats.compression_ratio,
             compression_stats.compression_percentage()
         );

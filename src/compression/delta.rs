@@ -129,11 +129,11 @@ pub fn decode_varint(data: &[u8]) -> Result<(u64, usize)> {
     for &byte in data {
         bytes_read += 1;
         result |= ((byte & 0x7F) as u64) << shift;
-        
+
         if byte & 0x80 == 0 {
             return Ok((result, bytes_read));
         }
-        
+
         shift += 7;
         if shift >= 64 {
             return Err(anyhow!("Varint too long"));
