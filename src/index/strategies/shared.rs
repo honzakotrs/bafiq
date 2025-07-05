@@ -51,16 +51,15 @@ pub fn extract_flags_from_decompressed_simd_optimized(
     let mut pos = 0;
 
     // Process records in chunks for better cache locality
-    const PREFETCH_DISTANCE: usize = 64; // Cache line size for optimal prefetching
-
     unsafe {
         let out_ptr = output_buffer.as_ptr();
         let end_ptr = out_ptr.add(decompressed_size);
 
         while pos + 4 <= decompressed_size {
-            // Prefetch next cache line to improve memory access patterns
+            // Prefetch next cache line to improve memory access patterns (x86_64 only)
             #[cfg(target_arch = "x86_64")]
             {
+                const PREFETCH_DISTANCE: usize = 64; // Cache line size for optimal prefetching
                 if pos + PREFETCH_DISTANCE < decompressed_size {
                     // Manual prefetch hint for better cache performance
                     std::ptr::read_volatile(out_ptr.add(pos + PREFETCH_DISTANCE));
