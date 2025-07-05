@@ -96,23 +96,33 @@ bench-view:
         
         echo ""
         
-        # Run bafiq view
-        echo "⚡ Running bafiq view..."
+        # Run bafiq view (sequential)
+        echo "⚡ Running bafiq view (sequential)..."
         time ./target/release/bafiq view -f 4 "$BAFIQ_TEST_BAM" > "$TEMP_DIR/out.bafiq.sam"
         BAFIQ_COUNT=$(wc -l < "$TEMP_DIR/out.bafiq.sam")
         BAFIQ_READS=$(grep -v "^@" "$TEMP_DIR/out.bafiq.sam" | wc -l)
         echo "   bafiq found: $BAFIQ_READS reads (total: $BAFIQ_COUNT lines with headers)"
         
         echo ""
+        
+        # Run bafiq view (parallel)
+        echo "🚀 Running bafiq view --parallel..."
+        time ./target/release/bafiq view --parallel -f 4 "$BAFIQ_TEST_BAM" > "$TEMP_DIR/out.bafiq.parallel.sam"
+        BAFIQ_PARALLEL_COUNT=$(wc -l < "$TEMP_DIR/out.bafiq.parallel.sam")
+        BAFIQ_PARALLEL_READS=$(grep -v "^@" "$TEMP_DIR/out.bafiq.parallel.sam" | wc -l)
+        echo "   bafiq parallel found: $BAFIQ_PARALLEL_READS reads (total: $BAFIQ_PARALLEL_COUNT lines with headers)"
+        
+        echo ""
         echo "📊 RESULTS:"
         echo "================================================"
-        if [ "$SAMTOOLS_READS" -eq "$BAFIQ_READS" ]; then
+        if [ "$SAMTOOLS_READS" -eq "$BAFIQ_READS" ] && [ "$SAMTOOLS_READS" -eq "$BAFIQ_PARALLEL_READS" ]; then
             echo "✅ Output verification: PASSED ($SAMTOOLS_READS reads)"
+            echo "   All tools found identical number of reads"
         else
             echo "❌ Output verification: FAILED"
             echo "   samtools: $SAMTOOLS_READS reads"
-            echo "   bafiq: $BAFIQ_READS reads"
-            echo "   Difference: $((BAFIQ_READS - SAMTOOLS_READS)) reads"
+            echo "   bafiq sequential: $BAFIQ_READS reads"
+            echo "   bafiq parallel: $BAFIQ_PARALLEL_READS reads"
         fi
         
         # Quick content comparison (first 10 lines)
@@ -128,7 +138,8 @@ bench-view:
         echo ""
         echo "📁 Output files saved to: $TEMP_DIR"
         echo "   samtools: $TEMP_DIR/out.samtools.sam"
-        echo "   bafiq: $TEMP_DIR/out.bafiq.sam"
+        echo "   bafiq sequential: $TEMP_DIR/out.bafiq.sam"
+        echo "   bafiq parallel: $TEMP_DIR/out.bafiq.parallel.sam"
         
         # Keep temp directory for manual inspection
         trap - EXIT

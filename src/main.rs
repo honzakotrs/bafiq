@@ -103,6 +103,13 @@ pub struct SharedArgs {
     #[arg(long = "no-flag", value_name = "NAME", num_args = 0..)]
     pub flags_to_exclude: Vec<String>,
 
+    /// Use parallel retrieval for view command (faster for large result sets)
+    #[arg(
+        long = "parallel",
+        help = "Enable parallel block processing for view command"
+    )]
+    pub parallel: bool,
+
     /// The input BAM/CRAM file
     pub input: PathBuf,
 }
@@ -474,8 +481,13 @@ fn cmd_view(args: SharedArgs) -> Result<()> {
     // Create a SAM writer to stdout
     let mut writer = Writer::from_stdout(&header, Format::Sam)?;
 
-    // Retrieve matching reads
-    index.retrieve_reads(&args.input, required_bits, forbidden_bits, &mut writer)?;
+    // Retrieve matching reads - use parallel version if requested
+    if args.parallel {
+        eprintln!("Using parallel retrieval for maximum performance...");
+        index.retrieve_reads_parallel(&args.input, required_bits, forbidden_bits, &mut writer)?;
+    } else {
+        index.retrieve_reads(&args.input, required_bits, forbidden_bits, &mut writer)?;
+    }
 
     Ok(())
 }
