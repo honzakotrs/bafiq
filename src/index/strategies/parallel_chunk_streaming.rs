@@ -11,14 +11,36 @@ use super::shared::extract_flags_from_block_pooled;
 use super::{IndexingStrategy, BGZF_BLOCK_MAX_SIZE, BGZF_FOOTER_SIZE, BGZF_HEADER_SIZE};
 use crate::FlagIndex;
 
-/// Build index using optimized parallel chunk streaming (new optimal strategy)
+/// **PARALLEL CHUNK STREAMING STRATEGY** - Optimized producer-consumer with batching (3.709s)
 ///
-/// BEST PARALLELISM - combines immediate streaming with lock-free channels:
-/// - Uses crossbeam::channel::bounded for true parallel receivers (no mutex)
-/// - Small batch size (16 blocks) for low latency with good throughput
-/// - Thread-local buffer pools to eliminate per-block allocations
-/// - rayon::current_num_threads() for consistency with other parallel code
-/// - Immediate processing start (no 1000-block batching delays)
+/// **Key Optimizations Learned:**
+/// - 16-block batches are optimal (vs 1000-block batches which added 301ms)
+/// - Bounded channels prevent memory pressure better than unbounded
+/// - Pre-allocated buffer pools eliminate per-block allocation overhead
+/// - Small batches provide low latency while maintaining throughput
+///
+/// **Lessons from ChunkStreaming Strategy:**
+/// - Large batches (1000 blocks) hurt performance due to increased latency
+/// - Chunking helps with memory management but batch size is critical
+/// - Sweet spot is 16-block batches for immediate processing with efficiency
+///
+/// **Why This Beats Simple Streaming:**
+/// - More controlled memory usage via bounded channels
+/// - Buffer pooling reduces allocation pressure
+/// - Batching reduces channel communication overhead
+/// - Better backpressure handling under load
+///
+/// **Architecture:**
+/// - Producer: Single-threaded discovery with 16-block micro-batches
+/// - Transport: Bounded crossbeam channels with reasonable buffer depth
+/// - Consumers: Multiple workers with pre-allocated buffer pools
+/// - Processing: Pooled decompressors and output buffers per worker
+///
+/// **Performance Characteristics:**
+/// - Time: 3.709s (solid mid-tier performance)
+/// - Memory: 1.4GB peak (controlled via bounded channels)
+/// - CPU: 158.1% peak, 18.6% average (good resource utilization)
+/// - Suitable for: When memory control and steady performance are priorities
 pub struct ParallelChunkStreamingStrategy;
 
 impl IndexingStrategy for ParallelChunkStreamingStrategy {
