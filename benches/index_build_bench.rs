@@ -490,12 +490,12 @@ fn simple_benchmarks() -> Result<()> {
             builder.build(path)
         })?;
 
-    let rayon_streaming_ultra_optimized =
-        run_benchmark_with_monitoring("rayon_streaming_ultra_optimized", &test_bam, |path| {
-            use bafiq::{BuildStrategy, IndexBuilder};
-            let builder = IndexBuilder::with_strategy(BuildStrategy::RayonStreamingUltraOptimized);
-            builder.build(path)
-        })?;
+    // let rayon_streaming_ultra_optimized =
+    //     run_benchmark_with_monitoring("rayon_streaming_ultra_optimized", &test_bam, |path| {
+    //         use bafiq::{BuildStrategy, IndexBuilder};
+    //         let builder = IndexBuilder::with_strategy(BuildStrategy::RayonStreamingUltraOptimized);
+    //         builder.build(path)
+    //     })?;
 
     let rayon_sys_streaming_optimized =
         run_benchmark_with_monitoring("rayon_sys_streaming_optimized", &test_bam, |path| {
@@ -530,10 +530,10 @@ fn simple_benchmarks() -> Result<()> {
         ("optimized", &optimized),
         ("rayon_optimized", &rayon_optimized),
         ("rayon_streaming_optimized", &rayon_streaming_optimized),
-        (
-            "rayon_streaming_ultra_optimized",
-            &rayon_streaming_ultra_optimized,
-        ),
+        // (
+        //     "rayon_streaming_ultra_optimized",
+        //     &rayon_streaming_ultra_optimized,
+        // ),
         (
             "rayon_sys_streaming_optimized",
             &rayon_sys_streaming_optimized,
@@ -963,20 +963,20 @@ fn criterion_benchmarks(c: &mut Criterion) {
         },
     );
 
-    // Benchmark the ultra-optimized approach (3-stage pipeline)
-    benchmark_cold_start(
-        &mut group,
-        "rayon_streaming_ultra_optimized",
-        &test_bam,
-        |file_path| {
-            use bafiq::{BuildStrategy, IndexBuilder};
-            let builder = IndexBuilder::with_strategy(BuildStrategy::RayonStreamingUltraOptimized);
-            let index = builder
-                .build(file_path)
-                .expect("Failed to build index with RayonStreamingUltraOptimized approach");
-            index.total_records()
-        },
-    );
+    // Benchmark the ultra-optimized approach (3-stage pipeline) [TEMPORARILY DISABLED]
+    // benchmark_cold_start(
+    //     &mut group,
+    //     "rayon_streaming_ultra_optimized",
+    //     &test_bam,
+    //     |file_path| {
+    //         use bafiq::{BuildStrategy, IndexBuilder};
+    //         let builder = IndexBuilder::with_strategy(BuildStrategy::RayonStreamingUltraOptimized);
+    //         let index = builder
+    //             .build(file_path)
+    //             .expect("Failed to build index with RayonStreamingUltraOptimized approach");
+    //         index.total_records()
+    //     },
+    // );
 
     // Benchmark the sys streaming optimized approach (direct libdeflate-sys)
     benchmark_cold_start(

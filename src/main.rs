@@ -29,9 +29,9 @@ pub enum CliStrategy {
     /// Streaming evolution of RayonOptimized - combines streaming discovery with work-stealing
     #[value(name = "rayon-streaming-optimized")]
     RayonStreamingOptimized,
-    /// **EXTREME PERFORMANCE** - 3-stage pipeline with parallel discovery (TARGET: 2-3x speedup)
-    #[value(name = "rayon-streaming-ultra-optimized")]
-    RayonStreamingUltraOptimized,
+    /// **EXTREME PERFORMANCE** - 3-stage pipeline with parallel discovery (TARGET: 2-3x speedup) [TEMPORARILY DISABLED]
+    // #[value(name = "rayon-streaming-ultra-optimized")]
+    // RayonStreamingUltraOptimized,
     /// Direct libdeflate-sys system library for maximum decompression performance
     #[value(name = "rayon-sys-streaming-optimized")]
     RayonSysStreamingOptimized,
@@ -59,9 +59,9 @@ impl From<CliStrategy> for BuildStrategy {
             CliStrategy::Optimized => BuildStrategy::Optimized,
             CliStrategy::RayonOptimized => BuildStrategy::RayonOptimized,
             CliStrategy::RayonStreamingOptimized => BuildStrategy::RayonStreamingOptimized,
-            CliStrategy::RayonStreamingUltraOptimized => {
-                BuildStrategy::RayonStreamingUltraOptimized
-            }
+            // CliStrategy::RayonStreamingUltraOptimized => {
+            //     BuildStrategy::RayonStreamingUltraOptimized
+            // }
             CliStrategy::RayonSysStreamingOptimized => BuildStrategy::RayonSysStreamingOptimized,
             CliStrategy::RayonMemoryOptimized => BuildStrategy::RayonMemoryOptimized,
             CliStrategy::RayonWaitFree => BuildStrategy::RayonWaitFree,

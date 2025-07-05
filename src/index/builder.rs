@@ -52,7 +52,7 @@ pub enum BuildStrategy {
     /// Streaming evolution of RayonOptimized - combines streaming discovery with work-stealing
     RayonStreamingOptimized,
     /// EXTREME PERFORMANCE - 3-stage pipeline with parallel discovery, NUMA-aware, vectorized processing
-    RayonStreamingUltraOptimized,
+    // RayonStreamingUltraOptimized, // Temporarily disabled
     /// Direct libdeflate-sys for maximum decompression performance with rayon streaming
     RayonSysStreamingOptimized,
     /// Memory access pattern optimization with vectorized processing
@@ -116,9 +116,9 @@ impl IndexBuilder {
             BuildStrategy::RayonStreamingOptimized => {
                 self.build_rayon_streaming_optimized(path_str)
             }
-            BuildStrategy::RayonStreamingUltraOptimized => {
-                self.build_rayon_streaming_ultra_optimized(path_str)
-            }
+            // BuildStrategy::RayonStreamingUltraOptimized => {
+            //     self.build_rayon_streaming_ultra_optimized(path_str)
+            // }
             BuildStrategy::RayonSysStreamingOptimized => {
                 self.build_rayon_sys_streaming_optimized(path_str)
             }
