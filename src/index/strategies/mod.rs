@@ -2,7 +2,9 @@ use crate::FlagIndex;
 use anyhow::Result;
 
 // Re-export all strategy implementations
+pub mod parallel_streaming;
 pub mod rayon_wait_free;
+pub mod shared;
 
 // Common types used across strategies
 #[derive(Clone)]

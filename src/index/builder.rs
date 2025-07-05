@@ -16,7 +16,8 @@ use std::thread as std_thread;
 use std::sync::atomic::AtomicBool;
 
 // Import strategies
-use crate::index::strategies::{IndexingStrategy, rayon_wait_free::RayonWaitFreeStrategy};
+use crate::index::strategies::{IndexingStrategy, rayon_wait_free::RayonWaitFreeStrategy, parallel_streaming::ParallelStreamingStrategy};
+use crate::index::strategies::shared::{extract_flags_from_block_pooled, extract_flags_from_decompressed_simd_optimized, discover_blocks_fast, count_flags_in_block_optimized};
 
 /// Information about a BGZF block's location in the file
 #[derive(Debug, Clone)]
@@ -106,7 +107,7 @@ impl IndexBuilder {
             .ok_or_else(|| anyhow!("Invalid file path"))?;
 
         match self.strategy {
-            BuildStrategy::ParallelStreaming => self.build_streaming_parallel(path_str),
+            BuildStrategy::ParallelStreaming => ParallelStreamingStrategy.build(path_str),
             BuildStrategy::Sequential => self.build_sequential(path_str),
             BuildStrategy::HtsLib => self.build_htslib(path_str),
             BuildStrategy::ChunkStreaming => self.build_chunk_streaming(path_str),
@@ -543,154 +544,7 @@ impl Default for IndexBuilder {
 // BGZF constants are now imported from crate::bgzf module
 
 impl IndexBuilder {
-    /// Build index using streaming parallel processing (legacy strategy with bottleneck)
-    ///
-    /// PERFORMANCE WARNING: This strategy has a mutex contention bottleneck:
-    /// - One producer thread discovers BGZF blocks and sends via std::mpsc::channel
-    /// - Multiple worker threads compete for Arc<Mutex<Receiver>> - SERIALIZATION POINT
-    /// - Fresh 65KB allocation per block (no buffer reuse)
-    /// - Scaling limited by receiver mutex contention, not CPU cores
-    pub fn build_streaming_parallel(&self, bam_path: &str) -> Result<FlagIndex> {
-        let file = File::open(bam_path)?;
-        let mmap = unsafe { Mmap::map(&file)? };
-        let data = Arc::new(mmap); // Share mmap safely across threads
 
-        let num_threads = rayon::current_num_threads();
-
-        // PERFORMANCE FIX: Use unbounded crossbeam channel - eliminates mutex contention!
-        let (sender, receiver) = unbounded::<(usize, usize)>(); // (start_pos, total_size)
-
-        // Producer thread: discovers blocks and sends them immediately
-        let data_producer = Arc::clone(&data);
-        let producer_handle = std_thread::spawn(move || -> Result<usize> {
-            let mut pos = 0;
-            let mut block_count = 0;
-            let data_len = data_producer.len();
-
-            while pos < data_len {
-                if pos + BGZF_HEADER_SIZE > data_len {
-                    break;
-                }
-
-                let header = &data_producer[pos..pos + BGZF_HEADER_SIZE];
-
-                // Validate GZIP magic
-                if header[0..2] != [0x1f, 0x8b] {
-                    return Err(anyhow!("Invalid GZIP header at position {}", pos));
-                }
-
-                // Extract block size
-                let bsize = u16::from_le_bytes([header[16], header[17]]) as usize;
-                let total_size = bsize + 1;
-
-                // Validate block size
-                if total_size < BGZF_HEADER_SIZE + BGZF_FOOTER_SIZE || total_size > 65536 {
-                    return Err(anyhow!("Invalid BGZF block size: {}", total_size));
-                }
-
-                if pos + total_size > data_len {
-                    break; // Incomplete block at end
-                }
-
-                // Send block info immediately to workers
-                if sender.send((pos, total_size)).is_err() {
-                    break; // Receivers hung up
-                }
-
-                pos += total_size;
-                block_count += 1;
-            }
-
-            // Close the channel
-            drop(sender);
-            Ok(block_count)
-        });
-
-        // Consumer threads: process blocks as they arrive
-        let mut worker_handles = Vec::new();
-        // PERFORMANCE FIX: No more shared mutex! Each worker gets its own receiver clone
-
-        for thread_id in 0..num_threads {
-            let receiver_clone = receiver.clone();
-            let data_worker = Arc::clone(&data);
-
-            let handle = std_thread::spawn(move || -> Result<FlagIndex> {
-                let mut local_index = FlagIndex::new();
-                let mut _processed_count = 0;
-
-                loop {
-                    // PERFORMANCE FIX: Direct channel access - NO MUTEX CONTENTION!
-                    match receiver_clone.recv() {
-                        Ok((start_pos, total_size)) => {
-                            let block = &data_worker[start_pos..start_pos + total_size];
-                            let block_offset = start_pos as i64;
-
-                            // Use thread-local buffers to avoid per-block allocations
-                            thread_local! {
-                                static BUFFER: std::cell::RefCell<Vec<u8>> = std::cell::RefCell::new(vec![0u8; BGZF_BLOCK_MAX_SIZE]);
-                                static DECOMPRESSOR: std::cell::RefCell<Decompressor> = std::cell::RefCell::new(Decompressor::new());
-                            }
-
-                            let result = BUFFER.with(|buf| {
-                                DECOMPRESSOR.with(|decomp| {
-                                    let mut buffer = buf.borrow_mut();
-                                    let mut decompressor = decomp.borrow_mut();
-                                    extract_flags_from_block_pooled(
-                                        block,
-                                        &mut local_index,
-                                        block_offset,
-                                        &mut buffer,
-                                        &mut decompressor,
-                                    )
-                                })
-                            });
-
-                            if let Err(e) = result {
-                                eprintln!("Thread {}: Block processing error: {}", thread_id, e);
-                                continue;
-                            }
-
-                            _processed_count += 1;
-                        }
-                        Err(_) => {
-                            // Channel closed, no more blocks
-                            break;
-                        }
-                    }
-                }
-
-                Ok(local_index)
-            });
-
-            worker_handles.push(handle);
-        }
-
-        // PERFORMANCE FIX: No need to drop receiver manually - crossbeam handles it automatically
-
-        // Wait for producer to complete
-        let _total_blocks = producer_handle
-            .join()
-            .map_err(|e| anyhow!("Producer thread failed: {:?}", e))??;
-
-        // Wait for all workers and collect their local indexes
-        let mut final_index = FlagIndex::new();
-
-        for handle in worker_handles.into_iter() {
-            match handle.join() {
-                Ok(Ok(local_index)) => {
-                    final_index.merge(local_index);
-                }
-                Ok(Err(e)) => {
-                    eprintln!("Worker thread failed: {}", e);
-                }
-                Err(e) => {
-                    eprintln!("Worker thread panicked: {:?}", e);
-                }
-            }
-        }
-
-        Ok(final_index)
-    }
 
     /// Build index using sequential processing (fallback strategy)
     ///
@@ -1196,7 +1050,7 @@ impl IndexBuilder {
         let data = Arc::new(mmap);
 
         // Phase 1: Discover all BGZF blocks (fast, single-threaded)
-        let blocks = discover_blocks_simple(&data)?;
+        let blocks = discover_blocks_fast(&data)?;
 
         // Phase 2: Process blocks in parallel using rayon (like fast-count methods)
         let local_indexes: Vec<FlagIndex> = blocks
@@ -2333,80 +2187,12 @@ impl IndexBuilder {
     }
 }
 
-/// Fast BGZF block discovery (helper function)
-fn discover_blocks_simple(data: &[u8]) -> Result<Vec<BlockInfo>> {
-        let mut blocks = Vec::new();
-        let mut pos = 0;
 
-        while pos < data.len() {
-            if pos + BGZF_HEADER_SIZE > data.len() {
-                break;
-            }
-
-            let header = &data[pos..pos + BGZF_HEADER_SIZE];
-            if header[0..2] != [0x1f, 0x8b] {
-                return Err(anyhow!("Invalid GZIP header at position {}", pos));
-            }
-
-            let bsize = u16::from_le_bytes([header[16], header[17]]) as usize;
-            let total_size = bsize + 1;
-
-            if total_size < BGZF_HEADER_SIZE + BGZF_FOOTER_SIZE || total_size > 65536 {
-                return Err(anyhow!("Invalid BGZF block size: {}", total_size));
-            }
-
-            if pos + total_size > data.len() {
-                break;
-            }
-
-            blocks.push(BlockInfo {
-                start_pos: pos,
-                total_size,
-            });
-
-            pos += total_size;
-        }
-
-        Ok(blocks)
-}
 
 // PERFORMANCE NOTE: extract_flags_from_block removed - it was inefficient!
 // Use extract_flags_from_block_pooled instead - no fresh allocations per block
 
-/// Extract flags from BAM records using provided buffers (memory-efficient version)
-///
-/// Same as extract_flags_from_block but uses caller-provided buffers to avoid allocations
-pub fn extract_flags_from_block_pooled(
-    block: &[u8],
-    index: &mut FlagIndex,
-    block_offset: i64,
-    output_buffer: &mut Vec<u8>,
-    decompressor: &mut Decompressor,
-) -> Result<usize> {
-    let mut record_count = 0;
-    let block_id = block_offset;
 
-    // Decompress using provided buffer and decompressor
-    let decompressed_size = decompressor
-        .gzip_decompress(block, output_buffer)
-        .map_err(|e| anyhow!("Decompression failed: {:?}", e))?;
-
-    // Skip BAM header blocks (they don't contain read records)
-    if decompressed_size >= 4 && &output_buffer[0..4] == b"BAM\x01" {
-        return Ok(0);
-    }
-
-    // Optimized record parsing with better memory access patterns
-    extract_flags_from_decompressed_simd_optimized(
-        output_buffer,
-        decompressed_size,
-        index,
-        block_id,
-        &mut record_count,
-    )?;
-
-    Ok(record_count)
-}
 
 /// **LIBDEFLATE-SYS FLAG EXTRACTION** - Direct system library decompression
 /// 
@@ -2465,66 +2251,7 @@ pub fn extract_flags_from_block_sys(
     Ok(record_count)
 }
 
-/// SIMD-optimized record parsing with prefetching and better memory access patterns
-#[inline(always)]
-fn extract_flags_from_decompressed_simd_optimized(
-    output_buffer: &[u8],
-    decompressed_size: usize,
-    index: &mut FlagIndex,
-    block_id: i64,
-    record_count: &mut usize,
-) -> Result<()> {
-    let mut pos = 0;
 
-    // Process records in chunks for better cache locality
-    const PREFETCH_DISTANCE: usize = 64; // Cache line size for optimal prefetching
-
-    unsafe {
-        let out_ptr = output_buffer.as_ptr();
-        let end_ptr = out_ptr.add(decompressed_size);
-
-        while pos + 4 <= decompressed_size {
-            // Prefetch next cache line to improve memory access patterns
-            #[cfg(target_arch = "x86_64")]
-            {
-                if pos + PREFETCH_DISTANCE < decompressed_size {
-                    // Manual prefetch hint for better cache performance
-                    std::ptr::read_volatile(out_ptr.add(pos + PREFETCH_DISTANCE));
-                }
-            }
-
-            let rec_size_ptr = out_ptr.add(pos) as *const u32;
-
-            // Bounds check before reading
-            if rec_size_ptr >= end_ptr as *const u32 {
-                break;
-            }
-
-            let rec_size = u32::from_le(ptr::read_unaligned(rec_size_ptr)) as usize;
-
-            // Validate record size
-            if pos + 4 + rec_size > decompressed_size {
-                break;
-            }
-
-            // We need at least 16 bytes to read the flag field at offset 14-15
-            if rec_size >= 16 {
-                let record_body_ptr = out_ptr.add(pos + 4);
-
-                // Direct memory access to flags at offset 14-15
-                let flags_ptr = record_body_ptr.add(14) as *const u16;
-                let flags = u16::from_le(ptr::read_unaligned(flags_ptr));
-
-                index.add_record_at_block(flags, block_id);
-                *record_count += 1;
-            }
-
-            pos += 4 + rec_size;
-        }
-    }
-
-    Ok(())
-}
 
 /// **ULTRA-OPTIMIZED VECTORIZED FLAG EXTRACTION**
 /// 
@@ -2537,66 +2264,7 @@ fn extract_flags_from_decompressed_simd_optimized(
 
 // PERFORMANCE NOTE: read_record_headers removed - it was only used by the inefficient extract_flags_from_block
 
-/// Optimized flag counting with thread-local buffer reuse
-fn count_flags_in_block_optimized(
-    block: &[u8],
-    required_flags: u16,
-    forbidden_flags: u16,
-) -> Result<u64> {
-    thread_local! {
-        static BUFFER: std::cell::RefCell<Vec<u8>> = std::cell::RefCell::new(vec![0u8; BGZF_BLOCK_MAX_SIZE]);
-        static DECOMPRESSOR: std::cell::RefCell<Decompressor> = std::cell::RefCell::new(Decompressor::new());
-    }
 
-    BUFFER.with(|buf| {
-        DECOMPRESSOR.with(|decomp| {
-            let mut output = buf.borrow_mut();
-            let mut decompressor = decomp.borrow_mut();
-
-            let decompressed_size = decompressor
-                .gzip_decompress(block, &mut output)
-                .map_err(|e| anyhow!("Decompression failed: {:?}", e))?;
-
-            // Skip BAM header blocks
-            if decompressed_size >= 4 && &output[0..4] == b"BAM\x01" {
-                return Ok(0);
-            }
-
-            let mut count = 0u64;
-            let mut pos = 0;
-
-            unsafe {
-                let out_ptr = output.as_ptr();
-                while pos + 4 <= decompressed_size {
-                    let rec_size =
-                        u32::from_le(ptr::read_unaligned(out_ptr.add(pos) as *const u32)) as usize;
-
-                    if pos + 4 + rec_size > decompressed_size {
-                        break;
-                    }
-
-                    // Extract flags at offset 14-15 in record body
-                    if rec_size >= 16 {
-                        let record_body =
-                            std::slice::from_raw_parts(out_ptr.add(pos + 4), rec_size);
-                        let flags = u16::from_le_bytes([record_body[14], record_body[15]]);
-
-                        // Apply flag filters
-                        if (flags & required_flags) == required_flags
-                            && (flags & forbidden_flags) == 0
-                        {
-                            count += 1;
-                        }
-                    }
-
-                    pos += 4 + rec_size;
-                }
-            }
-
-            Ok(count)
-        })
-    })
-}
 
 /// **VECTORIZED MEMORY-OPTIMIZED FLAG EXTRACTION** 
 /// 
