@@ -1,5 +1,5 @@
 use anyhow::Result;
-use crossbeam::channel::{bounded, Receiver, Sender};
+use crossbeam::channel::unbounded;
 use crossbeam::thread;
 use libdeflater::Decompressor;
 use memmap2::Mmap;
@@ -62,7 +62,7 @@ impl IndexingStrategy for ParallelChunkStreamingStrategy {
         let (sender, receiver): (
             crossbeam::channel::Sender<Vec<(usize, usize, i64)>>,
             crossbeam::channel::Receiver<Vec<(usize, usize, i64)>>,
-        ) = crossbeam::channel::unbounded();
+        ) = unbounded();
 
         thread::scope(|s| {
             // Parallel block discovery across file segments

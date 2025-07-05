@@ -18,6 +18,7 @@ pub struct ReadIterator {
 
 impl ReadIterator {
     /// Create a new read iterator for the given query
+    #[allow(dead_code)]
     pub fn new<P: AsRef<Path>>(
         index: &SerializableIndex,
         request: QueryRequest,
@@ -37,11 +38,13 @@ impl ReadIterator {
     }
 
     /// Get the total number of blocks that will be processed
+    #[allow(dead_code)]
     pub fn total_blocks(&self) -> usize {
         self.blocks.len()
     }
 
     /// Get the current block index being processed
+    #[allow(dead_code)]
     pub fn current_block_progress(&self) -> (usize, usize) {
         (self.current_block_idx, self.blocks.len())
     }
@@ -123,6 +126,7 @@ impl Iterator for ReadIterator {
 }
 
 /// Streaming interface for processing reads without loading all into memory
+#[allow(dead_code)]
 pub struct ReadStream {
     iterator: ReadIterator,
     batch_size: usize,
@@ -130,6 +134,7 @@ pub struct ReadStream {
 
 impl ReadStream {
     /// Create a new read stream with default batch size
+    #[allow(dead_code)]
     pub fn new<P: AsRef<Path>>(
         index: &SerializableIndex,
         request: QueryRequest,
@@ -143,6 +148,7 @@ impl ReadStream {
     }
 
     /// Create a new read stream with custom batch size
+    #[allow(dead_code)]
     pub fn with_batch_size<P: AsRef<Path>>(
         index: &SerializableIndex,
         request: QueryRequest,
@@ -157,6 +163,7 @@ impl ReadStream {
     }
 
     /// Process reads in batches using a callback function
+    #[allow(dead_code)]
     pub fn process_batches<F, E>(&mut self, mut processor: F) -> Result<u64>
     where
         F: FnMut(&[bam::Record]) -> Result<(), E>,
@@ -190,6 +197,7 @@ impl ReadStream {
     }
 
     /// Collect reads into a vector (use with caution for large result sets)
+    #[allow(dead_code)]
     pub fn collect_all(&mut self) -> Result<Vec<bam::Record>> {
         let mut records = Vec::new();
 
@@ -201,11 +209,13 @@ impl ReadStream {
     }
 
     /// Get progress information
+    #[allow(dead_code)]
     pub fn progress(&self) -> (usize, usize) {
         self.iterator.current_block_progress()
     }
 
     /// Estimate total reads (may not be exact due to filtering)
+    #[allow(dead_code)]
     pub fn estimated_total_reads(&self, index: &SerializableIndex) -> u64 {
         QueryEngine::count_reads(index, &self.iterator.request)
     }
@@ -221,6 +231,7 @@ pub struct BlockIterator {
 
 impl BlockIterator {
     /// Create a new block iterator
+    #[allow(dead_code)]
     pub fn new<P: AsRef<Path>>(
         index: &SerializableIndex,
         request: QueryRequest,
@@ -238,11 +249,13 @@ impl BlockIterator {
     }
 
     /// Get the total number of blocks
+    #[allow(dead_code)]
     pub fn total_blocks(&self) -> usize {
         self.blocks.len()
     }
 
     /// Get current progress
+    #[allow(dead_code)]
     pub fn progress(&self) -> (usize, usize) {
         (self.current_block_idx, self.blocks.len())
     }
@@ -304,6 +317,7 @@ impl Iterator for BlockIterator {
 
 /// Result of processing a single block
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct BlockResult {
     pub block_id: i64,
     pub records: Vec<bam::Record>,
@@ -311,11 +325,13 @@ pub struct BlockResult {
 
 impl BlockResult {
     /// Get the number of matching records in this block
+    #[allow(dead_code)]
     pub fn count(&self) -> usize {
         self.records.len()
     }
 
     /// Check if this block has any matching records
+    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.records.is_empty()
     }

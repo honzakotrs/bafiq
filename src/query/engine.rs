@@ -18,6 +18,7 @@ pub struct QueryRequest {
 
 impl QueryRequest {
     /// Create a new query request
+    #[allow(dead_code)]
     pub fn new(required_flags: u16, forbidden_flags: u16) -> Self {
         Self {
             required_flags,
@@ -26,21 +27,25 @@ impl QueryRequest {
     }
 
     /// Create a query for unmapped reads (flag 0x4 set)
+    #[allow(dead_code)]
     pub fn unmapped() -> Self {
         Self::new(0x4, 0)
     }
 
     /// Create a query for mapped reads (flag 0x4 unset)
+    #[allow(dead_code)]
     pub fn mapped() -> Self {
         Self::new(0, 0x4)
     }
 
     /// Create a query for paired reads (flag 0x1 set)
+    #[allow(dead_code)]
     pub fn paired() -> Self {
         Self::new(0x1, 0)
     }
 
     /// Create a query for properly paired reads (flags 0x1 and 0x2 set)
+    #[allow(dead_code)]
     pub fn properly_paired() -> Self {
         Self::new(0x1 | 0x2, 0)
     }
@@ -53,6 +58,7 @@ impl QueryRequest {
     }
 
     /// Check if a bin index matches this query
+    #[allow(dead_code)]
     pub fn matches_bin(&self, bin_idx: u16) -> bool {
         self.matches(bin_idx)
     }
@@ -60,6 +66,7 @@ impl QueryRequest {
 
 /// Query result containing count and block information
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct QueryResult {
     /// Total number of matching reads
     pub count: u64,
@@ -73,6 +80,7 @@ pub struct QueryResult {
 
 impl QueryResult {
     /// Create a new empty query result
+    #[allow(dead_code)]
     pub fn empty() -> Self {
         Self {
             count: 0,
@@ -83,6 +91,7 @@ impl QueryResult {
     }
 
     /// Print a summary of the query result
+    #[allow(dead_code)]
     pub fn print_summary(&self) {
         println!("Query Results:");
         println!("   Total matching reads: {}", self.count);
@@ -108,10 +117,12 @@ impl QueryResult {
 }
 
 /// Unified query engine that works with any index type
+#[allow(dead_code)]
 pub struct QueryEngine;
 
 impl QueryEngine {
     /// Execute a query against a serializable index
+    #[allow(dead_code)]
     pub fn execute_query(index: &SerializableIndex, request: &QueryRequest) -> QueryResult {
         match index.get_index() {
             IndexAccessor::Uncompressed(flag_index) => {
@@ -124,6 +135,7 @@ impl QueryEngine {
     }
 
     /// Execute a query against an uncompressed index
+    #[allow(dead_code)]
     pub fn execute_query_uncompressed(index: &FlagIndex, request: &QueryRequest) -> QueryResult {
         let mut count = 0;
         let mut block_set = HashSet::new();
@@ -160,6 +172,7 @@ impl QueryEngine {
     }
 
     /// Execute a query against a compressed index
+    #[allow(dead_code)]
     pub fn execute_query_compressed(
         index: &crate::CompressedFlagIndex,
         request: &QueryRequest,
@@ -195,6 +208,7 @@ impl QueryEngine {
     }
 
     /// Count matching reads without building full result
+    #[allow(dead_code)]
     pub fn count_reads(index: &SerializableIndex, request: &QueryRequest) -> u64 {
         match index.get_index() {
             IndexAccessor::Uncompressed(flag_index) => {
@@ -207,12 +221,14 @@ impl QueryEngine {
     }
 
     /// Get block IDs for a query without full result
+    #[allow(dead_code)]
     pub fn get_blocks(index: &SerializableIndex, request: &QueryRequest) -> Vec<i64> {
         let result = Self::execute_query(index, request);
         result.blocks
     }
 
     /// Extract matching reads and write them to a BAM writer
+    #[allow(dead_code)]
     pub fn extract_reads<P: AsRef<Path>>(
         index: &SerializableIndex,
         request: &QueryRequest,
@@ -248,6 +264,7 @@ impl QueryEngine {
     }
 
     /// Analyze a query's efficiency metrics
+    #[allow(dead_code)]
     pub fn analyze_query_efficiency(
         index: &SerializableIndex,
         request: &QueryRequest,
@@ -281,6 +298,7 @@ impl QueryEngine {
 
 /// Analysis of query efficiency for optimization
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct QueryEfficiencyAnalysis {
     pub matching_reads: u64,
     pub total_reads: u64,
@@ -291,6 +309,7 @@ pub struct QueryEfficiencyAnalysis {
 }
 
 impl QueryEfficiencyAnalysis {
+    #[allow(dead_code)]
     pub fn print_analysis(&self) {
         println!("Query Efficiency Analysis:");
         println!("{}", "=".repeat(40));
