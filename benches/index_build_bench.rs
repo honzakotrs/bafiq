@@ -517,6 +517,32 @@ fn simple_benchmarks() -> Result<()> {
         builder.build(path)
     })?;
 
+    let sequential = run_benchmark_with_monitoring("sequential", &test_bam, |path| {
+        use bafiq::{BuildStrategy, IndexBuilder};
+        let builder = IndexBuilder::with_strategy(BuildStrategy::Sequential);
+        builder.build(path)
+    })?;
+
+    let rayon_optimal_parallel =
+        run_benchmark_with_monitoring("rayon_optimal_parallel", &test_bam, |path| {
+            use bafiq::{BuildStrategy, IndexBuilder};
+            let builder = IndexBuilder::with_strategy(BuildStrategy::RayonOptimalParallel);
+            builder.build(path)
+        })?;
+
+    let rayon_ultra_performance =
+        run_benchmark_with_monitoring("rayon_ultra_performance", &test_bam, |path| {
+            use bafiq::{BuildStrategy, IndexBuilder};
+            let builder = IndexBuilder::with_strategy(BuildStrategy::RayonUltraPerformance);
+            builder.build(path)
+        })?;
+
+    let rayon_expert = run_benchmark_with_monitoring("rayon_expert", &test_bam, |path| {
+        use bafiq::{BuildStrategy, IndexBuilder};
+        let builder = IndexBuilder::with_strategy(BuildStrategy::RayonExpert);
+        builder.build(path)
+    })?;
+
     // Run samtools benchmark
     let samtools_result = run_simple_samtools_benchmark(&test_bam)?;
 
@@ -540,6 +566,10 @@ fn simple_benchmarks() -> Result<()> {
         ),
         ("rayon_memory_optimized", &rayon_memory_optimized),
         ("rayon_wait_free", &rayon_wait_free),
+        ("sequential", &sequential),
+        ("rayon_optimal_parallel", &rayon_optimal_parallel),
+        ("rayon_ultra_performance", &rayon_ultra_performance),
+        ("rayon_expert", &rayon_expert),
     ];
 
     // Performance and Resource Usage Summary Table
