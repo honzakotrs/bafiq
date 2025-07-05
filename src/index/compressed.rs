@@ -354,6 +354,26 @@ impl CompressedFlagIndex {
         flags
     }
 
+    /// Get block IDs that contain reads matching the given criteria
+    pub fn blocks_for(&self, required_bits: u16, forbidden_bits: u16) -> Vec<i64> {
+        let mut block_ids = std::collections::HashSet::new();
+
+        // Check each stored flag combination
+        for flag in self.sparse_storage.used_flags() {
+            let flag = *flag;
+            if (flag & required_bits) == required_bits && (flag & forbidden_bits) == 0 {
+                let blocks = self.get_bin_blocks(flag);
+                for (block_id, _) in blocks {
+                    block_ids.insert(block_id);
+                }
+            }
+        }
+
+        let mut result: Vec<i64> = block_ids.into_iter().collect();
+        result.sort();
+        result
+    }
+
     /// Convert back to uncompressed FlagIndex for compatibility
     pub fn to_uncompressed(&self) -> FlagIndex {
         let mut index = FlagIndex::new();

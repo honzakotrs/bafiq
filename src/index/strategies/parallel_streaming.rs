@@ -23,7 +23,7 @@ use crate::FlagIndex;
 /// - Outperforms bounded channel variants despite using unbounded channels
 /// - Proves that channel choice is less important than overall architecture
 /// - Shows that simple streaming can compete with complex optimizations
-/// - 28ms faster than parallel_chunk_streaming despite being "simpler"
+/// - Demonstrates that simple architecture can outperform complex batch processing
 /// - Unbounded channels work fine when producer discovery is the bottleneck
 ///
 /// **Architecture:**

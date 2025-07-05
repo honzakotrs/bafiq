@@ -3,7 +3,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use rust_htslib::bam::{Format, Read as BamRead, Writer};
 use std::path::{Path, PathBuf};
 
-use bafiq::{BuildStrategy, FlagIndex, IndexBuilder, IndexManager, SerializableIndex};
+use bafiq::{BuildStrategy, IndexBuilder, IndexManager, SerializableIndex};
 
 /// CLI-friendly strategy names that map to BuildStrategy
 #[derive(Debug, Clone, ValueEnum)]
@@ -15,9 +15,6 @@ pub enum CliStrategy {
     #[value(name = "parallel-streaming")]
     ParallelStreaming,
 
-    /// Optimized parallel chunk streaming - producer-consumer with batching (3.709s)
-    #[value(name = "parallel-chunk-streaming")]
-    ParallelChunkStreaming,
     /// Streaming evolution with work-stealing - hybrid producer-consumer + work-stealing (3.609s)
     #[value(name = "rayon-streaming-optimized")]
     RayonStreamingOptimized,
@@ -31,7 +28,6 @@ impl From<CliStrategy> for BuildStrategy {
         match cli_strategy {
             CliStrategy::Sequential => BuildStrategy::Sequential,
             CliStrategy::ParallelStreaming => BuildStrategy::ParallelStreaming,
-            CliStrategy::ParallelChunkStreaming => BuildStrategy::ParallelChunkStreaming,
             CliStrategy::RayonStreamingOptimized => BuildStrategy::RayonStreamingOptimized,
             CliStrategy::RayonWaitFree => BuildStrategy::RayonWaitFree,
         }
@@ -248,13 +244,6 @@ pub struct SharedArgs {
     #[arg(long = "force-rebuild")]
     pub force_rebuild: bool,
 
-    /// Use parallel retrieval for view command (faster for large result sets)
-    #[arg(
-        long = "parallel",
-        help = "Enable parallel block processing for view command"
-    )]
-    pub parallel: bool,
-
     /// The input BAM/CRAM file
     pub input: PathBuf,
 }
@@ -469,47 +458,17 @@ fn cmd_view(args: SharedArgs) -> Result<()> {
     // Create a SAM writer to stdout
     let mut writer = Writer::from_stdout(&header, Format::Sam)?;
 
-    // Get the underlying index and convert to uncompressed for retrieval if needed
+    // Get the index accessor - works with both compressed and uncompressed indexes
     let index_accessor = serializable_index.get_index();
-    let flag_index = match index_accessor {
-        _ if index_accessor.is_compressed() => {
-            // This is a compressed index, we need to convert it
-            eprintln!("Converting compressed index for read retrieval...");
-            // For now, we'll just report the issue and suggest rebuilding
-            return Err(anyhow!("View command cannot currently retrieve reads from compressed indexes. Please rebuild the index without compression using: bafiq index --input {:?}", args.input));
-        }
-        _ => {
-            // This is an uncompressed index, we can use it directly
-            // We'll need to implement a way to get the underlying FlagIndex
-            // For now, let's build it fresh if it's compressed
-            if serializable_index
-                .get_format_info()
-                .format_type
-                .contains("Compressed")
-            {
-                eprintln!("Rebuilding as uncompressed index for read retrieval...");
-                let builder = IndexBuilder::new();
-                builder.build(input_str)?
-            } else {
-                // Load the uncompressed index directly
-                let index_path = index_manager.get_index_path(input_str);
-                FlagIndex::from_file(Path::new(&index_path))?
-            }
-        }
-    };
 
-    // Retrieve matching reads - use parallel version if requested
-    if args.parallel {
-        eprintln!("Using parallel retrieval for maximum performance...");
-        flag_index.retrieve_reads_parallel(
-            &args.input,
-            required_bits,
-            forbidden_bits,
-            &mut writer,
-        )?;
-    } else {
-        flag_index.retrieve_reads(&args.input, required_bits, forbidden_bits, &mut writer)?;
-    }
+    // Retrieve matching reads using parallel processing (always enabled for best performance)
+    // This works seamlessly with both compressed and uncompressed indexes!
+    index_accessor.retrieve_reads_parallel(
+        &args.input,
+        required_bits,
+        forbidden_bits,
+        &mut writer,
+    )?;
 
     Ok(())
 }

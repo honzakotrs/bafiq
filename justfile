@@ -61,7 +61,7 @@ bench-view:
     else
         echo "Running view performance benchmark..."
         echo "   BAM file: $BAFIQ_TEST_BAM"
-        echo "   Query: unmapped reads (-f 0x4 / -f 4)"
+        echo "   Query: unmapped reads (-f 0x4 / -f 4 / --unmapped)"
         echo ""
         
         # Build bafiq first
@@ -96,8 +96,8 @@ bench-view:
         
         echo ""
         
-        # Run bafiq view (sequential)
-        echo "⚡ Running bafiq view (sequential)..."
+        # Run bafiq view (numeric flag - samtools compatibility)
+        echo "⚡ Running bafiq view (numeric flag)..."
         time ./target/release/bafiq view -f 4 "$BAFIQ_TEST_BAM" > "$TEMP_DIR/out.bafiq.sam"
         BAFIQ_COUNT=$(wc -l < "$TEMP_DIR/out.bafiq.sam")
         BAFIQ_READS=$(grep -v "^@" "$TEMP_DIR/out.bafiq.sam" | wc -l)
@@ -105,24 +105,24 @@ bench-view:
         
         echo ""
         
-        # Run bafiq view (parallel)
-        echo "🚀 Running bafiq view --parallel..."
-        time ./target/release/bafiq view --parallel -f 4 "$BAFIQ_TEST_BAM" > "$TEMP_DIR/out.bafiq.parallel.sam"
-        BAFIQ_PARALLEL_COUNT=$(wc -l < "$TEMP_DIR/out.bafiq.parallel.sam")
-        BAFIQ_PARALLEL_READS=$(grep -v "^@" "$TEMP_DIR/out.bafiq.parallel.sam" | wc -l)
-        echo "   bafiq parallel found: $BAFIQ_PARALLEL_READS reads (total: $BAFIQ_PARALLEL_COUNT lines with headers)"
+        # Run bafiq view (named flag - user-friendly syntax)
+        echo "🚀 Running bafiq view (named flag)..."
+        time ./target/release/bafiq view --unmapped "$BAFIQ_TEST_BAM" > "$TEMP_DIR/out.bafiq.named.sam"
+        BAFIQ_NAMED_COUNT=$(wc -l < "$TEMP_DIR/out.bafiq.named.sam")
+        BAFIQ_NAMED_READS=$(grep -v "^@" "$TEMP_DIR/out.bafiq.named.sam" | wc -l)
+        echo "   bafiq found: $BAFIQ_NAMED_READS reads (total: $BAFIQ_NAMED_COUNT lines with headers)"
         
         echo ""
         echo "📊 RESULTS:"
         echo "================================================"
-        if [ "$SAMTOOLS_READS" -eq "$BAFIQ_READS" ] && [ "$SAMTOOLS_READS" -eq "$BAFIQ_PARALLEL_READS" ]; then
+        if [ "$SAMTOOLS_READS" -eq "$BAFIQ_READS" ] && [ "$SAMTOOLS_READS" -eq "$BAFIQ_NAMED_READS" ]; then
             echo "✅ Output verification: PASSED ($SAMTOOLS_READS reads)"
             echo "   All tools found identical number of reads"
         else
             echo "❌ Output verification: FAILED"
             echo "   samtools: $SAMTOOLS_READS reads"
-            echo "   bafiq sequential: $BAFIQ_READS reads"
-            echo "   bafiq parallel: $BAFIQ_PARALLEL_READS reads"
+            echo "   bafiq (numeric flag): $BAFIQ_READS reads"
+            echo "   bafiq (named flag): $BAFIQ_NAMED_READS reads"
         fi
         
         # Quick content comparison (first 10 lines)
@@ -138,8 +138,8 @@ bench-view:
         echo ""
         echo "📁 Output files saved to: $TEMP_DIR"
         echo "   samtools: $TEMP_DIR/out.samtools.sam"
-        echo "   bafiq sequential: $TEMP_DIR/out.bafiq.sam"
-        echo "   bafiq parallel: $TEMP_DIR/out.bafiq.parallel.sam"
+        echo "   bafiq (numeric flag): $TEMP_DIR/out.bafiq.sam"
+        echo "   bafiq (named flag): $TEMP_DIR/out.bafiq.named.sam"
         
         # Keep temp directory for manual inspection
         trap - EXIT

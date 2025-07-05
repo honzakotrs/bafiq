@@ -3,7 +3,6 @@ use anyhow::Result;
 
 // Re-export remaining strategy implementations
 
-pub mod parallel_chunk_streaming;
 pub mod parallel_streaming;
 pub mod rayon_streaming_optimized;
 pub mod rayon_wait_free;
