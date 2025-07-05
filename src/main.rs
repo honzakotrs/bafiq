@@ -23,9 +23,6 @@ pub enum CliStrategy {
     /// Optimized parallel chunk streaming - combines immediate streaming with true parallelism
     #[value(name = "parallel-chunk-streaming")]
     ParallelChunkStreaming,
-    /// High-performance strategy implementing all performance.md recommendations
-    #[value(name = "optimized")]
-    Optimized,
     /// Rayon-based parallel processing - inspired by fast-count 2.3s performance
     #[value(name = "rayon-optimized")]
     RayonOptimized,
@@ -60,7 +57,6 @@ impl From<CliStrategy> for BuildStrategy {
             CliStrategy::HtsLib => BuildStrategy::HtsLib,
             CliStrategy::ChunkStreaming => BuildStrategy::ChunkStreaming,
             CliStrategy::ParallelChunkStreaming => BuildStrategy::ParallelChunkStreaming,
-            CliStrategy::Optimized => BuildStrategy::Optimized,
             CliStrategy::RayonOptimized => BuildStrategy::RayonOptimized,
             CliStrategy::RayonStreamingOptimized => BuildStrategy::RayonStreamingOptimized,
             // CliStrategy::RayonStreamingUltraOptimized => {
