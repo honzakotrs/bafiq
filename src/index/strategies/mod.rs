@@ -1,16 +1,11 @@
 use crate::FlagIndex;
 use anyhow::Result;
 
-// Re-export all strategy implementations
-pub mod chunk_streaming;
+// Re-export remaining strategy implementations
 pub mod htslib;
 pub mod parallel_chunk_streaming;
 pub mod parallel_streaming;
-pub mod rayon_expert;
-pub mod rayon_memory_optimized;
-pub mod rayon_optimized;
 pub mod rayon_streaming_optimized;
-pub mod rayon_ultra_performance;
 pub mod rayon_wait_free;
 pub mod sequential;
 pub mod shared;

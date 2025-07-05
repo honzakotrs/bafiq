@@ -20,3 +20,11 @@ of being faster leveraging rust language features and ecosystem
 
 - Using justfile to shorten the key commands
 - Criterion to drive the benchmarks (index building strategies)
+
+## Principles
+
+- Use DRY (do not repeat yourslef)
+- Use KISS (keep it simple stupid)
+- never duplicate unless explicitly asked (temporary tests etc.)
+- do not write tests unless asked as the code might evolve further first
+- before removing files make sure with the user that changes are commited

@@ -10,7 +10,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 use sysinfo::{Pid, System};
 
-use bafiq::{benchmark, FlagIndex};
+use bafiq::{benchmark, BuildStrategy, FlagIndex, IndexBuilder};
 
 /// Global storage for resource usage data from Criterion benchmarks
 static CRITERION_RESOURCE_DATA: LazyLock<Mutex<HashMap<String, ResourceStats>>> =
@@ -204,6 +204,65 @@ struct BenchmarkResult {
     duration: Duration,
     index: FlagIndex,
     resources: ResourceStats,
+}
+
+/// Represents a benchmarkable strategy or baseline
+#[derive(Debug, Clone)]
+enum BenchmarkEntry {
+    /// Strategy-based benchmark using IndexBuilder
+    Strategy(BuildStrategy),
+    /// Legacy baseline benchmark with custom implementation
+    Legacy {
+        name: &'static str,
+        runner: fn(&str) -> Result<FlagIndex>,
+    },
+}
+
+impl BenchmarkEntry {
+    /// Get the name of this benchmark entry
+    fn name(&self) -> &str {
+        match self {
+            BenchmarkEntry::Strategy(strategy) => strategy.name(),
+            BenchmarkEntry::Legacy { name, .. } => name,
+        }
+    }
+
+    /// Run this benchmark entry
+    fn run(&self, bam_path: &str) -> Result<FlagIndex> {
+        match self {
+            BenchmarkEntry::Strategy(strategy) => {
+                let builder = IndexBuilder::with_strategy(*strategy);
+                builder.build(bam_path)
+            }
+            BenchmarkEntry::Legacy { runner, .. } => runner(bam_path),
+        }
+    }
+
+    /// Get all benchmark entries to run
+    fn all_entries() -> Vec<BenchmarkEntry> {
+        let mut entries = vec![
+            // Legacy baseline implementations (for comparison)
+            BenchmarkEntry::Legacy {
+                name: "legacy_rust_htslib",
+                runner: |path| FlagIndex::from_path(path),
+            },
+            BenchmarkEntry::Legacy {
+                name: "legacy_parallel_raw",
+                runner: |path| benchmark::build_flag_index_parallel(path),
+            },
+            BenchmarkEntry::Legacy {
+                name: "legacy_streaming_raw",
+                runner: |path| benchmark::build_flag_index_streaming_parallel(path),
+            },
+        ];
+
+        // Add all strategy-based benchmarks (use strategy.name() for consistent naming)
+        for strategy in BuildStrategy::benchmark_strategies() {
+            entries.push(BenchmarkEntry::Strategy(strategy));
+        }
+
+        entries
+    }
 }
 
 /// Enhanced benchmark function with resource monitoring
@@ -427,6 +486,11 @@ fn format_size(bytes: u64) -> String {
     }
 }
 
+/// Generic benchmark runner for any benchmark entry
+fn run_generic_benchmark(entry: &BenchmarkEntry, test_bam: &str) -> Result<BenchmarkResult> {
+    run_benchmark_with_monitoring(entry.name(), test_bam, |path| entry.run(path))
+}
+
 /// Simple benchmarks mode (fast development)
 fn simple_benchmarks() -> Result<()> {
     let test_bam = match env::var("BAFIQ_TEST_BAM") {
@@ -438,129 +502,34 @@ fn simple_benchmarks() -> Result<()> {
         }
     };
 
+    // Display machine and threading information
+    let total_cores = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or_else(|_| num_cpus::get());
+    let rayon_threads = rayon::current_num_threads();
+
     println!("Simple Benchmarking with file: {}", test_bam);
-    println!("Fast development mode with resource monitoring");
+    println!("Machine Configuration:");
+    println!("   Available CPU cores: {}", total_cores);
+    println!("   Rayon thread pool size: {}", rayon_threads);
+    println!("   Fast development mode with resource monitoring");
 
     // Get original BAM file size for comparison
     let bam_size = get_file_size(&test_bam)?;
     println!("Original BAM size: {}", format_size(bam_size));
     println!("{}", "=".repeat(100));
 
-    // Run each benchmark with enhanced monitoring
-    let rust_htslib =
-        run_benchmark_with_monitoring("rust-htslib", &test_bam, |path| FlagIndex::from_path(path))?;
+    // Run all benchmark entries generically
+    let benchmark_entries = BenchmarkEntry::all_entries();
+    let mut results = Vec::new();
 
-    let parallel = run_benchmark_with_monitoring("parallel_low_level", &test_bam, |path| {
-        benchmark::build_flag_index_parallel(path)
-    })?;
-
-    let streaming = run_benchmark_with_monitoring("streaming_parallel", &test_bam, |path| {
-        benchmark::build_flag_index_streaming_parallel(path)
-    })?;
-
-    let chunk_streaming = run_benchmark_with_monitoring("chunk_streaming", &test_bam, |path| {
-        use bafiq::{BuildStrategy, IndexBuilder};
-        let builder = IndexBuilder::with_strategy(BuildStrategy::ChunkStreaming);
-        builder.build(path)
-    })?;
-
-    let parallel_chunk_streaming =
-        run_benchmark_with_monitoring("parallel_chunk_streaming", &test_bam, |path| {
-            use bafiq::{BuildStrategy, IndexBuilder};
-            let builder = IndexBuilder::with_strategy(BuildStrategy::ParallelChunkStreaming);
-            builder.build(path)
-        })?;
-
-    // Optimized strategy has been removed - was duplicate of ParallelChunkStreaming
-
-    let rayon_optimized = run_benchmark_with_monitoring("rayon_optimized", &test_bam, |path| {
-        use bafiq::{BuildStrategy, IndexBuilder};
-        let builder = IndexBuilder::with_strategy(BuildStrategy::RayonOptimized);
-        builder.build(path)
-    })?;
-
-    let rayon_streaming_optimized =
-        run_benchmark_with_monitoring("rayon_streaming_optimized", &test_bam, |path| {
-            use bafiq::{BuildStrategy, IndexBuilder};
-            let builder = IndexBuilder::with_strategy(BuildStrategy::RayonStreamingOptimized);
-            builder.build(path)
-        })?;
-
-    // let rayon_streaming_ultra_optimized =
-    //     run_benchmark_with_monitoring("rayon_streaming_ultra_optimized", &test_bam, |path| {
-    //         use bafiq::{BuildStrategy, IndexBuilder};
-    //         let builder = IndexBuilder::with_strategy(BuildStrategy::RayonStreamingUltraOptimized);
-    //         builder.build(path)
-    //     })?;
-
-    let rayon_memory_optimized =
-        run_benchmark_with_monitoring("rayon_memory_optimized", &test_bam, |path| {
-            use bafiq::{BuildStrategy, IndexBuilder};
-            let builder = IndexBuilder::with_strategy(BuildStrategy::RayonMemoryOptimized);
-            builder.build(path)
-        })?;
-
-    let rayon_wait_free = run_benchmark_with_monitoring("rayon_wait_free", &test_bam, |path| {
-        use bafiq::{BuildStrategy, IndexBuilder};
-        let builder = IndexBuilder::with_strategy(BuildStrategy::RayonWaitFree);
-        builder.build(path)
-    })?;
-
-    // MUTED: Sequential strategy is too slow for routine benchmarking
-    // Set BAFIQ_BENCH_SEQUENTIAL=1 to enable sequential benchmarking
-    let sequential = if env::var("BAFIQ_BENCH_SEQUENTIAL").is_ok() {
-        Some(run_benchmark_with_monitoring(
-            "sequential",
-            &test_bam,
-            |path| {
-                use bafiq::{BuildStrategy, IndexBuilder};
-                let builder = IndexBuilder::with_strategy(BuildStrategy::Sequential);
-                builder.build(path)
-            },
-        )?)
-    } else {
-        None
-    };
-
-    let rayon_ultra_performance =
-        run_benchmark_with_monitoring("rayon_ultra_performance", &test_bam, |path| {
-            use bafiq::{BuildStrategy, IndexBuilder};
-            let builder = IndexBuilder::with_strategy(BuildStrategy::RayonUltraPerformance);
-            builder.build(path)
-        })?;
-
-    let rayon_expert = run_benchmark_with_monitoring("rayon_expert", &test_bam, |path| {
-        use bafiq::{BuildStrategy, IndexBuilder};
-        let builder = IndexBuilder::with_strategy(BuildStrategy::RayonExpert);
-        builder.build(path)
-    })?;
+    for entry in &benchmark_entries {
+        let result = run_generic_benchmark(entry, &test_bam)?;
+        results.push((entry.name(), result));
+    }
 
     // Run samtools benchmark
     let samtools_result = run_simple_samtools_benchmark(&test_bam)?;
-
-    // Store all results for table display
-    let mut results = vec![
-        ("rust-htslib", &rust_htslib),
-        ("parallel", &parallel),
-        ("streaming", &streaming),
-        ("chunk_streaming", &chunk_streaming),
-        ("parallel_chunk_streaming", &parallel_chunk_streaming),
-        ("rayon_optimized", &rayon_optimized),
-        ("rayon_streaming_optimized", &rayon_streaming_optimized),
-        // (
-        //     "rayon_streaming_ultra_optimized",
-        //     &rayon_streaming_ultra_optimized,
-        // ),
-        ("rayon_memory_optimized", &rayon_memory_optimized),
-        ("rayon_wait_free", &rayon_wait_free),
-        ("rayon_ultra_performance", &rayon_ultra_performance),
-        ("rayon_expert", &rayon_expert),
-    ];
-
-    // Add sequential results if enabled
-    if let Some(ref seq_result) = sequential {
-        results.push(("sequential", seq_result));
-    }
 
     // Performance and Resource Usage Summary Table
     println!("\nPerformance & Resource Usage Summary:");
@@ -611,7 +580,7 @@ fn simple_benchmarks() -> Result<()> {
     println!("\nMemory Efficiency Analysis:");
     let mut memory_efficiency: Vec<_> = results
         .iter()
-        .map(|(name, result)| (name, result.resources.peak_memory_bytes))
+        .map(|(name, result)| (*name, result.resources.peak_memory_bytes))
         .collect();
     memory_efficiency.sort_by_key(|(_, memory)| *memory);
 
@@ -629,7 +598,7 @@ fn simple_benchmarks() -> Result<()> {
     println!("\nSpeed Analysis:");
     let mut speed_ranking: Vec<_> = results
         .iter()
-        .map(|(name, result)| (name, result.duration))
+        .map(|(name, result)| (*name, result.duration))
         .collect();
     speed_ranking.sort_by_key(|(_, duration)| *duration);
 
@@ -649,7 +618,7 @@ fn simple_benchmarks() -> Result<()> {
     println!("\n🖥️  CPU Utilization Analysis:");
     let mut cpu_efficiency: Vec<_> = results
         .iter()
-        .map(|(name, result)| (name, result.resources.avg_cpu_percent))
+        .map(|(name, result)| (*name, result.resources.avg_cpu_percent))
         .collect();
     cpu_efficiency.sort_by(|(_, cpu_a), (_, cpu_b)| cpu_b.partial_cmp(cpu_a).unwrap());
 
@@ -658,51 +627,59 @@ fn simple_benchmarks() -> Result<()> {
         println!("   {}. {} - {:.1}% average CPU", i + 1, name, cpu);
     }
 
-    // Comprehensive index verification (same as before)
+    // Comprehensive index verification
     println!("\nIndex Verification:");
-    let first_total = rust_htslib.index.total_records();
-    let all_match = results
-        .iter()
-        .all(|(_, result)| result.index.total_records() == first_total)
-        && first_total == samtools_result.1;
-
-    if all_match {
-        println!("   All record counts match: {}", first_total);
-        println!("   samtools verification: {} records", samtools_result.1);
-    } else {
-        println!("   Record count mismatch!");
-        for (name, result) in &results {
-            println!("      {}: {}", name, result.index.total_records());
-        }
-        println!("      samtools: {}", samtools_result.1);
-        return Err(anyhow::anyhow!(
-            "Index verification failed: record counts don't match"
-        ));
-    }
-
-    // Performance gate check (enhanced)
-    let best_duration = results
-        .iter()
-        .map(|(_, result)| result.duration)
-        .min()
-        .unwrap();
-
-    if best_duration < rust_htslib.duration {
-        let speedup = rust_htslib.duration.as_secs_f64() / best_duration.as_secs_f64();
-        let best_strategy = results
+    if let Some((_, first_result)) = results.first() {
+        let first_total = first_result.index.total_records();
+        let all_match = results
             .iter()
-            .find(|(_, result)| result.duration == best_duration)
-            .map(|(name, _)| name)
-            .unwrap();
+            .all(|(_, result)| result.index.total_records() == first_total)
+            && first_total == samtools_result.1;
 
-        println!("\n🎯 Performance Gate: PASSED");
-        println!(
-            "   Best strategy: {} ({:.2}x faster than rust-htslib)",
-            best_strategy, speedup
-        );
-    } else {
-        println!("\n Performance Gate: FAILED");
-        println!("   No strategy outperformed rust-htslib baseline");
+        if all_match {
+            println!("   All record counts match: {}", first_total);
+            println!("   samtools verification: {} records", samtools_result.1);
+        } else {
+            println!("   Record count mismatch!");
+            for (name, result) in &results {
+                println!("      {}: {}", name, result.index.total_records());
+            }
+            println!("      samtools: {}", samtools_result.1);
+            return Err(anyhow::anyhow!(
+                "Index verification failed: record counts don't match"
+            ));
+        }
+
+        // Performance gate check - find rust-htslib baseline
+        if let Some((_, rust_htslib_result)) = results
+            .iter()
+            .find(|(name, _)| *name == "legacy_rust_htslib")
+        {
+            let best_duration = results
+                .iter()
+                .map(|(_, result)| result.duration)
+                .min()
+                .unwrap();
+
+            if best_duration < rust_htslib_result.duration {
+                let speedup =
+                    rust_htslib_result.duration.as_secs_f64() / best_duration.as_secs_f64();
+                let best_strategy = results
+                    .iter()
+                    .find(|(_, result)| result.duration == best_duration)
+                    .map(|(name, _)| name)
+                    .unwrap();
+
+                println!("\n🎯 Performance Gate: PASSED");
+                println!(
+                    "   Best strategy: {} ({:.2}x faster than rust-htslib)",
+                    best_strategy, speedup
+                );
+            } else {
+                println!("\n Performance Gate: FAILED");
+                println!("   No strategy outperformed rust-htslib baseline");
+            }
+        }
     }
 
     Ok(())
@@ -858,6 +835,20 @@ impl ResourceMonitor {
     }
 }
 
+/// Generic Criterion benchmark for any benchmark entry
+fn benchmark_entry_criterion(
+    group: &mut BenchmarkGroup<WallTime>,
+    entry: &BenchmarkEntry,
+    test_bam: &str,
+) {
+    benchmark_cold_start(group, entry.name(), test_bam, |file_path| {
+        let index = entry
+            .run(file_path)
+            .unwrap_or_else(|e| panic!("Failed to build index with {}: {}", entry.name(), e));
+        index.total_records()
+    });
+}
+
 /// Performance benchmarks using Criterion (detailed analysis mode)
 fn criterion_benchmarks(c: &mut Criterion) {
     // Get the test BAM file path from environment variable
@@ -873,8 +864,19 @@ fn criterion_benchmarks(c: &mut Criterion) {
         }
     };
 
+    // Display machine and threading information
+    let total_cores = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or_else(|_| num_cpus::get());
+    let rayon_threads = rayon::current_num_threads();
+
     println!("Criterion Benchmarking with file: {}", test_bam);
-    println!("Using cold start conditions via cache clearing (3 samples for fast development)");
+    println!("Machine Configuration:");
+    println!("   Available CPU cores: {}", total_cores);
+    println!("   Rayon thread pool size: {}", rayon_threads);
+    println!(
+        "Using cold start conditions via cache clearing (10 samples for statistical analysis)"
+    );
 
     if env::var("BAFIQ_BENCH_DEBUG").is_ok() {
         println!("Debug mode enabled");
@@ -895,139 +897,10 @@ fn criterion_benchmarks(c: &mut Criterion) {
         .measurement_time(Duration::from_secs(1020)) // Reasonable time for 10 samples
         .warm_up_time(Duration::from_millis(100)); // Minimal warmup to satisfy Criterion
 
-    // Benchmark the rust-htslib approach (building FlagIndex)
-    benchmark_cold_start(&mut group, "rust_htslib", &test_bam, |file_path| {
-        let index =
-            FlagIndex::from_path(file_path).expect("Failed to build index with rust-htslib");
-        index.total_records()
-    });
-
-    // Benchmark the sequential low-level approach (building FlagIndex)
-    benchmark_cold_start(&mut group, "sequential_low_level", &test_bam, |file_path| {
-        let index = benchmark::build_flag_index_low_level(file_path)
-            .expect("Failed to build index with sequential low-level approach");
-        index.total_records()
-    });
-
-    // Benchmark the parallel low-level approach (building FlagIndex)
-    benchmark_cold_start(&mut group, "parallel_low_level", &test_bam, |file_path| {
-        let index = benchmark::build_flag_index_parallel(file_path)
-            .expect("Failed to build index with parallel low-level approach");
-        index.total_records()
-    });
-
-    // Benchmark the streaming parallel approach
-    benchmark_cold_start(&mut group, "streaming_parallel", &test_bam, |file_path| {
-        let index = benchmark::build_flag_index_streaming_parallel(file_path)
-            .expect("Failed to build index with streaming parallel approach");
-        index.total_records()
-    });
-
-    // Benchmark the chunk streaming approach
-    benchmark_cold_start(&mut group, "chunk_streaming", &test_bam, |file_path| {
-        use bafiq::{BuildStrategy, IndexBuilder};
-        let builder = IndexBuilder::with_strategy(BuildStrategy::ChunkStreaming);
-        let index = builder
-            .build(file_path)
-            .expect("Failed to build index with chunk streaming approach");
-        index.total_records()
-    });
-
-    // Benchmark the parallel chunk streaming approach (new default)
-    benchmark_cold_start(
-        &mut group,
-        "parallel_chunk_streaming",
-        &test_bam,
-        |file_path| {
-            use bafiq::{BuildStrategy, IndexBuilder};
-            let builder = IndexBuilder::with_strategy(BuildStrategy::ParallelChunkStreaming);
-            let index = builder
-                .build(file_path)
-                .expect("Failed to build index with parallel chunk streaming approach");
-            index.total_records()
-        },
-    );
-
-    // Optimized strategy has been removed - was duplicate of ParallelChunkStreaming
-
-    // Benchmark the Rayon-optimized approach (current default)
-    benchmark_cold_start(&mut group, "rayon_optimized", &test_bam, |file_path| {
-        use bafiq::{BuildStrategy, IndexBuilder};
-        let builder = IndexBuilder::with_strategy(BuildStrategy::RayonOptimized);
-        let index = builder
-            .build(file_path)
-            .expect("Failed to build index with Rayon-optimized approach");
-        index.total_records()
-    });
-
-    // Benchmark the new RayonStreamingOptimized approach (streaming evolution)
-    benchmark_cold_start(
-        &mut group,
-        "rayon_streaming_optimized",
-        &test_bam,
-        |file_path| {
-            use bafiq::{BuildStrategy, IndexBuilder};
-            let builder = IndexBuilder::with_strategy(BuildStrategy::RayonStreamingOptimized);
-            let index = builder
-                .build(file_path)
-                .expect("Failed to build index with RayonStreamingOptimized approach");
-            index.total_records()
-        },
-    );
-
-    // Benchmark the ultra-optimized approach (3-stage pipeline) [TEMPORARILY DISABLED]
-    // benchmark_cold_start(
-    //     &mut group,
-    //     "rayon_streaming_ultra_optimized",
-    //     &test_bam,
-    //     |file_path| {
-    //         use bafiq::{BuildStrategy, IndexBuilder};
-    //         let builder = IndexBuilder::with_strategy(BuildStrategy::RayonStreamingUltraOptimized);
-    //         let index = builder
-    //             .build(file_path)
-    //             .expect("Failed to build index with RayonStreamingUltraOptimized approach");
-    //         index.total_records()
-    //     },
-    // );
-
-    // RayonSysStreamingOptimized strategy has been removed
-
-    // Benchmark the memory optimized approach (vectorized processing)
-    benchmark_cold_start(
-        &mut group,
-        "rayon_memory_optimized",
-        &test_bam,
-        |file_path| {
-            use bafiq::{BuildStrategy, IndexBuilder};
-            let builder = IndexBuilder::with_strategy(BuildStrategy::RayonMemoryOptimized);
-            let index = builder
-                .build(file_path)
-                .expect("Failed to build index with RayonMemoryOptimized approach");
-            index.total_records()
-        },
-    );
-
-    // Benchmark the wait-free approach (BREAKTHROUGH: eliminates condition variable bottleneck)
-    benchmark_cold_start(&mut group, "rayon_wait_free", &test_bam, |file_path| {
-        use bafiq::{BuildStrategy, IndexBuilder};
-        let builder = IndexBuilder::with_strategy(BuildStrategy::RayonWaitFree);
-        let index = builder
-            .build(file_path)
-            .expect("Failed to build index with RayonWaitFree approach");
-        index.total_records()
-    });
-
-    // MUTED: Sequential approach (single-threaded baseline) - too slow for routine benchmarking
-    // Set BAFIQ_BENCH_SEQUENTIAL=1 to enable sequential benchmarking in Criterion mode
-    if env::var("BAFIQ_BENCH_SEQUENTIAL").is_ok() {
-        benchmark_cold_start(&mut group, "sequential", &test_bam, |file_path| {
-            use bafiq::{BuildStrategy, IndexBuilder};
-            let builder = IndexBuilder::with_strategy(BuildStrategy::Sequential);
-            let index = builder
-                .build(file_path)
-                .expect("Failed to build index with sequential approach");
-            index.total_records()
-        });
+    // Run all benchmark entries generically
+    let benchmark_entries = BenchmarkEntry::all_entries();
+    for entry in &benchmark_entries {
+        benchmark_entry_criterion(&mut group, entry, &test_bam);
     }
 
     group.finish();

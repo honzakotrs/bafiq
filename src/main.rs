@@ -8,42 +8,24 @@ use bafiq::{BuildStrategy, FlagIndex, IndexBuilder, IndexManager, SerializableIn
 /// CLI-friendly strategy names that map to BuildStrategy
 #[derive(Debug, Clone, ValueEnum)]
 pub enum CliStrategy {
-    /// Sequential processing - single-threaded fallback
+    /// Sequential processing - single-threaded baseline for measuring parallel benefits
     #[value(name = "sequential")]
     Sequential,
-    /// Streaming parallel processing - has receiver mutex contention bottleneck
+    /// Streaming parallel processing - simplest high-performance producer-consumer (3.433s)
     #[value(name = "parallel-streaming")]
     ParallelStreaming,
-    /// rust-htslib based - for benchmarking and compatibility
+    /// rust-htslib based - reference implementation using rust-htslib (3.888s)
     #[value(name = "htslib")]
     HtsLib,
-    /// Chunk-based streaming - better parallelism but higher latency due to batching
-    #[value(name = "chunk-streaming")]
-    ChunkStreaming,
-    /// Optimized parallel chunk streaming - combines immediate streaming with true parallelism
+    /// Optimized parallel chunk streaming - producer-consumer with batching (3.709s)
     #[value(name = "parallel-chunk-streaming")]
     ParallelChunkStreaming,
-    /// Rayon-based parallel processing - inspired by fast-count 2.3s performance
-    #[value(name = "rayon-optimized")]
-    RayonOptimized,
-    /// Streaming evolution of RayonOptimized - combines streaming discovery with work-stealing
+    /// Streaming evolution with work-stealing - hybrid producer-consumer + work-stealing (3.609s)
     #[value(name = "rayon-streaming-optimized")]
     RayonStreamingOptimized,
-    /// **EXTREME PERFORMANCE** - 3-stage pipeline with parallel discovery (TARGET: 2-3x speedup) [TEMPORARILY DISABLED]
-    // #[value(name = "rayon-streaming-ultra-optimized")]
-    // RayonStreamingUltraOptimized,
-    /// Memory access optimization with vectorized record processing
-    #[value(name = "rayon-memory-optimized")]
-    RayonMemoryOptimized,
-    /// Wait-free processing to eliminate 51% condition variable bottleneck
+    /// Wait-free processing - fastest performing approach (3.409s)
     #[value(name = "rayon-wait-free")]
     RayonWaitFree,
-    /// Ultra-optimized strategy targeting 1-2s execution time with SIMD, cache optimization, NUMA awareness
-    #[value(name = "rayon-ultra-performance")]
-    RayonUltraPerformance,
-    /// Expert-level 3-stage pipeline with bounded channels, SIMD scanning, and zero-copy optimization
-    #[value(name = "rayon-expert")]
-    RayonExpert,
 }
 
 impl From<CliStrategy> for BuildStrategy {
@@ -52,17 +34,9 @@ impl From<CliStrategy> for BuildStrategy {
             CliStrategy::Sequential => BuildStrategy::Sequential,
             CliStrategy::ParallelStreaming => BuildStrategy::ParallelStreaming,
             CliStrategy::HtsLib => BuildStrategy::HtsLib,
-            CliStrategy::ChunkStreaming => BuildStrategy::ChunkStreaming,
             CliStrategy::ParallelChunkStreaming => BuildStrategy::ParallelChunkStreaming,
-            CliStrategy::RayonOptimized => BuildStrategy::RayonOptimized,
             CliStrategy::RayonStreamingOptimized => BuildStrategy::RayonStreamingOptimized,
-            // CliStrategy::RayonStreamingUltraOptimized => {
-            //     BuildStrategy::RayonStreamingUltraOptimized
-            // }
-            CliStrategy::RayonMemoryOptimized => BuildStrategy::RayonMemoryOptimized,
             CliStrategy::RayonWaitFree => BuildStrategy::RayonWaitFree,
-            CliStrategy::RayonUltraPerformance => BuildStrategy::RayonUltraPerformance,
-            CliStrategy::RayonExpert => BuildStrategy::RayonExpert,
         }
     }
 }
@@ -204,9 +178,6 @@ enum Commands {
     /// Build the index for the given BAM/CRAM file
     Index(IndexArgs),
 
-    /// Experimental command for testing low-level BGZF approach
-    Tmp(IndexArgs),
-
     /// Query BAM file with automatic caching
     Query {
         /// BAM file to query
@@ -337,7 +308,6 @@ fn main() -> Result<()> {
         Commands::Count(args) => cmd_count(args),
         Commands::View(args) => cmd_view(args),
         Commands::Index(args) => cmd_index(args),
-        Commands::Tmp(args) => cmd_tmp(args),
         Commands::Query {
             input,
             required,
@@ -411,15 +381,6 @@ fn get_index_path(input: &Path) -> PathBuf {
     // Append .bfi to the original extension (.bam.bfi or .cram.bfi)
     index_path.set_extension(format!("{}.bfi", extension));
     index_path
-}
-
-fn cmd_tmp(args: IndexArgs) -> Result<()> {
-    // Experimental command for testing and debugging
-    println!("Experimental debugging command");
-    println!("   File: {:?}", args.input);
-    println!("   This command is used for development testing and debugging.");
-
-    Ok(())
 }
 
 /// `bafiq index <input.bam>`

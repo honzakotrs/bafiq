@@ -20,13 +20,10 @@ use crate::index::strategies::shared::{
     count_flags_in_block_optimized, extract_flags_from_decompressed_simd_optimized,
 };
 use crate::index::strategies::{
-    chunk_streaming::ChunkStreamingStrategy, htslib::HtsLibStrategy,
-    parallel_chunk_streaming::ParallelChunkStreamingStrategy,
-    parallel_streaming::ParallelStreamingStrategy, rayon_expert::RayonExpertStrategy,
-    rayon_memory_optimized::RayonMemoryOptimizedStrategy, rayon_optimized::RayonOptimizedStrategy,
+    htslib::HtsLibStrategy, parallel_chunk_streaming::ParallelChunkStreamingStrategy,
+    parallel_streaming::ParallelStreamingStrategy,
     rayon_streaming_optimized::RayonStreamingOptimizedStrategy,
-    rayon_ultra_performance::RayonUltraPerformanceStrategy, rayon_wait_free::RayonWaitFreeStrategy,
-    sequential::SequentialStrategy, IndexingStrategy,
+    rayon_wait_free::RayonWaitFreeStrategy, sequential::SequentialStrategy, IndexingStrategy,
 };
 
 /// Information about a BGZF block's location in the file
@@ -46,32 +43,57 @@ struct DecompressedBlock {
 /// Available index building strategies
 #[derive(Debug, Clone, Copy)]
 pub enum BuildStrategy {
-    /// Streaming parallel processing - has receiver mutex contention bottleneck
+    /// Streaming parallel processing - simplest high-performance producer-consumer (3.433s)
     ParallelStreaming,
-    /// Sequential processing - single-threaded fallback
+    /// Sequential processing - single-threaded baseline for measuring parallel benefits
     Sequential,
-    /// rust-htslib based - for benchmarking and compatibility
+    /// rust-htslib based - reference implementation using rust-htslib (3.888s)
     HtsLib,
-    /// Chunk-based streaming - better parallelism but higher latency due to batching
-    ChunkStreaming,
-    /// Optimized parallel chunk streaming - combines immediate streaming with true parallelism (new default)
+    /// Optimized parallel chunk streaming - producer-consumer with batching (3.709s)
     ParallelChunkStreaming,
-    /// Rayon-based parallel processing - inspired by fast-count 2.3s performance
-    RayonOptimized,
-    /// Streaming evolution of RayonOptimized - combines streaming discovery with work-stealing
+    /// Streaming evolution with work-stealing - hybrid producer-consumer + work-stealing (3.609s)
     RayonStreamingOptimized,
-    /// EXTREME PERFORMANCE - 3-stage pipeline with parallel discovery, NUMA-aware, vectorized processing
-    // RayonStreamingUltraOptimized, // Temporarily disabled
-    /// Memory access pattern optimization with vectorized processing
-    RayonMemoryOptimized,
-    /// Wait-free processing to eliminate the 51% __psynch_cvwait bottleneck
+    /// Wait-free processing - fastest performing approach (3.409s)
     RayonWaitFree,
-    /// Ultra-optimized strategy targeting 1-2s execution time
-    /// Incorporates: SIMD vectorization, cache optimization, NUMA awareness, memory prefetching
-    RayonUltraPerformance,
-    /// Expert-level optimization with 3-stage pipeline, bounded channels, SIMD scanning, zero-copy
-    /// Based on performance expert recommendations for maximum CPU utilization
-    RayonExpert,
+}
+
+impl BuildStrategy {
+    /// Get the canonical name for this strategy (used in benchmarks and CLI)
+    pub fn name(&self) -> &'static str {
+        match self {
+            BuildStrategy::ParallelStreaming => "parallel_streaming",
+            BuildStrategy::Sequential => "sequential",
+            BuildStrategy::HtsLib => "htslib",
+            BuildStrategy::ParallelChunkStreaming => "parallel_chunk_streaming",
+            BuildStrategy::RayonStreamingOptimized => "rayon_streaming_optimized",
+            BuildStrategy::RayonWaitFree => "rayon_wait_free",
+        }
+    }
+
+    /// Get all available strategies for benchmarking
+    pub fn all_strategies() -> Vec<BuildStrategy> {
+        vec![
+            BuildStrategy::HtsLib,
+            BuildStrategy::ParallelStreaming,
+            BuildStrategy::ParallelChunkStreaming,
+            BuildStrategy::RayonStreamingOptimized,
+            BuildStrategy::RayonWaitFree,
+            BuildStrategy::Sequential, // Last because it's often muted
+        ]
+    }
+
+    /// Get strategies suitable for routine benchmarking (excludes slow ones)
+    pub fn benchmark_strategies() -> Vec<BuildStrategy> {
+        if std::env::var("BAFIQ_BENCH_SEQUENTIAL").is_ok() {
+            Self::all_strategies()
+        } else {
+            // Exclude sequential for routine benchmarking - too slow
+            Self::all_strategies()
+                .into_iter()
+                .filter(|s| !matches!(s, BuildStrategy::Sequential))
+                .collect()
+        }
+    }
 }
 
 impl Default for BuildStrategy {
@@ -115,19 +137,11 @@ impl IndexBuilder {
             BuildStrategy::ParallelStreaming => ParallelStreamingStrategy.build(path_str),
             BuildStrategy::Sequential => SequentialStrategy.build(path_str),
             BuildStrategy::HtsLib => HtsLibStrategy.build(path_str),
-            BuildStrategy::ChunkStreaming => ChunkStreamingStrategy.build(path_str),
             BuildStrategy::ParallelChunkStreaming => ParallelChunkStreamingStrategy.build(path_str),
-            BuildStrategy::RayonOptimized => RayonOptimizedStrategy.build(path_str),
             BuildStrategy::RayonStreamingOptimized => {
                 RayonStreamingOptimizedStrategy.build(path_str)
             }
-            // BuildStrategy::RayonStreamingUltraOptimized => {
-            //     self.build_rayon_streaming_ultra_optimized(path_str)
-            // }
-            BuildStrategy::RayonMemoryOptimized => RayonMemoryOptimizedStrategy.build(path_str),
             BuildStrategy::RayonWaitFree => RayonWaitFreeStrategy.build(path_str),
-            BuildStrategy::RayonUltraPerformance => RayonUltraPerformanceStrategy.build(path_str),
-            BuildStrategy::RayonExpert => RayonExpertStrategy.build(path_str),
         }
     }
 
@@ -534,15 +548,7 @@ impl Default for IndexBuilder {
 // BGZF constants are now imported from crate::bgzf module
 
 impl IndexBuilder {
-    // HtsLib strategy has been extracted to src/index/strategies/htslib.rs
-
-    // ChunkStreaming strategy has been extracted to src/index/strategies/chunk_streaming.rs
-
-    // ParallelChunkStreaming strategy has been extracted to src/index/strategies/parallel_chunk_streaming.rs
-
-    // RayonOptimized strategy has been extracted to src/index/strategies/rayon_optimized.rs
-
-    // RayonStreamingOptimized strategy has been extracted to src/index/strategies/rayon_streaming_optimized.rs
+    // All indexing strategies have been extracted to src/index/strategies/ modules
 
     /// **EXTREME PERFORMANCE STRATEGY** - 3-stage pipeline with parallel discovery
     ///
@@ -785,15 +791,7 @@ impl IndexBuilder {
         .unwrap()
     }
 
-    // RayonSysStreamingOptimized strategy has been removed - libdeflate-sys approach eliminated
-
-    // RayonMemoryOptimized strategy has been extracted to src/index/strategies/rayon_memory_optimized.rs
-
-    // RayonOptimalParallel strategy has been removed - was duplicate of RayonStreamingOptimized
-
-    // RayonUltraPerformance strategy has been extracted to src/index/strategies/rayon_ultra_performance.rs
-
-    // RayonExpert strategy has been extracted to src/index/strategies/rayon_expert.rs
+    // Redundant and poorly-performing strategies have been removed based on benchmark results
 }
 
 // PERFORMANCE NOTE: extract_flags_from_block removed - it was inefficient!
