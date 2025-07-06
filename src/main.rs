@@ -301,23 +301,6 @@ enum Commands {
         flags: FlagFilter,
     },
 
-    /// Load and query from saved index
-    LoadIndex {
-        /// Saved index file
-        input: PathBuf,
-
-        /// Required bits (hex format)
-        #[arg(long)]
-        required: Option<String>,
-
-        /// Forbidden bits (hex format)
-        #[arg(long)]
-        forbidden: Option<String>,
-    },
-
-    /// Clear saved index for a BAM file
-    ClearIndex(IndexArgs),
-
     /// Show index information and status
     IndexInfo(IndexArgs),
 }
@@ -351,12 +334,6 @@ fn main() -> Result<()> {
         Commands::Index(args) => cmd_index(args),
         Commands::Query(args) => cmd_query(args),
         Commands::FastCount { input, flags } => cmd_fast_count(input, flags, cli.threads),
-        Commands::LoadIndex {
-            input,
-            required,
-            forbidden,
-        } => cmd_load_index(input, required, forbidden),
-        Commands::ClearIndex(args) => cmd_clear_index(args),
         Commands::IndexInfo(args) => cmd_index_info(args),
     }
 }
@@ -505,64 +482,6 @@ fn cmd_query(args: SharedArgs) -> Result<()> {
         (load_time + query_time).as_secs_f64() * 1000.0
     );
 
-    Ok(())
-}
-
-fn cmd_load_index(
-    input: PathBuf,
-    required: Option<String>,
-    forbidden: Option<String>,
-) -> Result<()> {
-    use std::time::Instant;
-
-    eprintln!("Loading saved index...");
-    eprintln!("   Input: {:?}", input);
-
-    // Load index
-    let start = Instant::now();
-    let serializable_index = SerializableIndex::load_from_file(&input)?;
-    let load_time = start.elapsed();
-
-    // Show index info
-    let format_info = serializable_index.get_format_info();
-    let cache_info = serializable_index.get_cache_info();
-
-    eprintln!("Index loaded successfully!");
-    eprintln!("   Format: {}", format_info.format_type);
-    eprintln!("   Compression: {:.2}x", format_info.compression_ratio);
-    eprintln!("   Source: {}", cache_info.source_path);
-    eprintln!("   Load time: {:.3}ms", load_time.as_secs_f64() * 1000.0);
-
-    // If query parameters provided, run query
-    if let (Some(req), Some(forb)) = (required, forbidden) {
-        let required_bits = parse_flag_value(&req)?;
-        let forbidden_bits = parse_flag_value(&forb)?;
-
-        eprintln!(
-            "Querying: required=0x{:x}, forbidden=0x{:x}",
-            required_bits, forbidden_bits
-        );
-
-        let start = Instant::now();
-        let index = serializable_index.get_index();
-        let result = index.count(required_bits, forbidden_bits);
-        let query_time = start.elapsed();
-
-        eprintln!("Query Results:");
-        eprintln!("   Matching reads: {}", result);
-        eprintln!("   Query time: {:.3}ms", query_time.as_secs_f64() * 1000.0);
-    }
-
-    Ok(())
-}
-
-fn cmd_clear_index(args: IndexArgs) -> Result<()> {
-    let input_str = args
-        .input
-        .to_str()
-        .ok_or_else(|| anyhow!("Invalid file path"))?;
-    let index_manager = IndexManager::new();
-    index_manager.clear_index(input_str)?;
     Ok(())
 }
 
