@@ -6,3 +6,5 @@ target/
 *.bai
 
 .DS_Store
+
+cargo-flamegraph.trace/
