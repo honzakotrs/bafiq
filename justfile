@@ -103,8 +103,6 @@ bench:
             echo "Running with $thread_count threads..."
             
             for strategy in "${STRATEGIES[@]}"; do
-                echo "Running monitored benchmark: $strategy (${thread_count} threads)"
-                
                 # Clean up any existing index to ensure fresh build
                 rm -f "${BAFIQ_TEST_BAM}.bfi"
                 
