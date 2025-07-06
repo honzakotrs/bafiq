@@ -59,7 +59,7 @@ bench:
         echo "threads,strategy,timestamp_ms,memory_mb,cpu_percent" > "$MEMORY_CSV"
         
         # Strategies to test (core strategies and reference tools)
-        STRATEGIES=("constant-memory" "parallel-streaming" "rayon-wait-free" "bafiq-fast-count" "samtools")
+        STRATEGIES=("adaptive-memory-mapped" "constant-memory" "parallel-streaming" "rayon-wait-free" "bafiq-fast-count" "samtools")
         
         # Temporary file for collecting all results
         TEMP_RESULTS=$(mktemp)
@@ -333,7 +333,7 @@ bench:
         }
         
         # Generate plots for interesting strategies
-        PLOT_STRATEGIES=("constant-memory" "rayon-wait-free" "parallel-streaming" "bafiq-fast-count")
+        PLOT_STRATEGIES=("adaptive-memory-mapped" "constant-memory" "rayon-wait-free" "parallel-streaming" "bafiq-fast-count")
         for strategy in "${PLOT_STRATEGIES[@]}"; do
             for thread_count in "${THREAD_ARRAY[@]}"; do
                 generate_ascii_plot "$strategy" "$thread_count"
