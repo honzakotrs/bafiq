@@ -655,7 +655,7 @@ fn simple_benchmarks() -> Result<()> {
     }
 
     // CPU utilization analysis
-    println!("\n🖥️  CPU Utilization Analysis:");
+    println!("\n  CPU Utilization Analysis:");
     let mut cpu_efficiency: Vec<_> = results
         .iter()
         .map(|(name, result)| (*name, result.resources.avg_cpu_percent))
@@ -691,7 +691,6 @@ fn simple_benchmarks() -> Result<()> {
         }
 
         // Performance gate check - find samtools baseline and compare
-        println!("\n🎯 Performance Gate: Beat samtools (5.086s target)");
         let best_duration = results
             .iter()
             .map(|(_, result)| result.duration)
@@ -709,14 +708,14 @@ fn simple_benchmarks() -> Result<()> {
 
         if best_seconds < SAMTOOLS_BASELINE {
             let speedup = SAMTOOLS_BASELINE / best_seconds;
-            println!("   Status: PASSED ✅");
+            println!("   Status: PASSED");
             println!(
                 "   Best strategy: {} ({:.2}x faster than samtools)",
                 best_strategy, speedup
             );
         } else {
             let slowdown = best_seconds / SAMTOOLS_BASELINE;
-            println!("   Status: FAILED ❌");
+            println!("   Status: FAILED");
             println!(
                 "   Best strategy: {} ({:.2}x slower than samtools)",
                 best_strategy, slowdown

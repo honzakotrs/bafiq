@@ -383,16 +383,20 @@ fn cmd_index(args: IndexArgs) -> Result<()> {
     } else {
         eprintln!("   Compression: DISABLED (faster build, larger files)");
 
-        // Use fast uncompressed path - either IndexManager or direct approach
-        let index_manager = IndexManager::new();
+        // Use the correct strategy from CLI argument
+        let builder = IndexBuilder::with_strategy(strategy);
         let input_str = args
             .input
             .to_str()
             .ok_or_else(|| anyhow!("Invalid file path"))?;
 
-        // Force rebuild with no compression
-        let _serializable_index =
-            index_manager.load_or_build_with_compression(input_str, true, false)?;
+        eprintln!("🔄 Force rebuilding index...");
+        let uncompressed_index = builder.build(input_str)?;
+
+        // Create and save serializable index
+        let serializable_index =
+            SerializableIndex::from_uncompressed(uncompressed_index, input_str)?;
+        serializable_index.save_to_file(&index_path)?;
 
         eprintln!("Index built and saved: {:?}", index_path);
     }
