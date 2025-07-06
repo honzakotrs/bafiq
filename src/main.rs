@@ -12,9 +12,9 @@ pub enum CliStrategy {
     /// Channel-based producer-consumer - crossbeam channels architecture (2.127s)
     #[value(name = "channel-producer-consumer")]
     ChannelProducerConsumer,
-    /// Wait-free processing - fastest performing approach (1.427s)
-    #[value(name = "rayon-wait-free")]
-    RayonWaitFree,
+    /// Work-stealing processing - fastest performing approach (1.427s)
+    #[value(name = "work-stealing")]
+    WorkStealing,
     /// constant-memory processing - constant RAM footprint for any file size
     #[value(name = "constant-memory")]
     ConstantMemory,
@@ -27,7 +27,7 @@ impl From<CliStrategy> for BuildStrategy {
     fn from(cli_strategy: CliStrategy) -> Self {
         match cli_strategy {
             CliStrategy::ChannelProducerConsumer => BuildStrategy::ChannelProducerConsumer,
-            CliStrategy::RayonWaitFree => BuildStrategy::RayonWaitFree,
+            CliStrategy::WorkStealing => BuildStrategy::WorkStealing,
             CliStrategy::ConstantMemory => BuildStrategy::ConstantMemory,
             CliStrategy::AdaptiveMemoryMapped => BuildStrategy::AdaptiveMemoryMapped,
         }
@@ -257,8 +257,8 @@ pub struct IndexArgs {
     #[arg(
         long = "strategy",
         value_enum,
-        default_value = "rayon-wait-free",
-        help = "Index building strategy to use (default: wait-free for maximum performance)"
+        default_value = "work-stealing",
+        help = "Index building strategy to use (default: work-stealing for maximum performance)"
     )]
     pub strategy: CliStrategy,
 

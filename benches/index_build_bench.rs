@@ -580,7 +580,7 @@ fn simple_benchmarks() -> Result<()> {
     println!("{}", "=".repeat(60));
 
     // Show memory plots for key strategies (limit to avoid overwhelming output)
-    let plot_strategies = ["memory_friendly", "rayon_wait_free", "parallel_streaming"];
+    let plot_strategies = ["memory_friendly", "work_stealing", "parallel_streaming"];
 
     for strategy_name in &plot_strategies {
         if let Some((_, result)) = results.iter().find(|(name, _)| name == strategy_name) {

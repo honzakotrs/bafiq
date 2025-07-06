@@ -416,7 +416,7 @@ impl FlagIndex {
     /// **LOCK-FREE PARALLEL RETRIEVE** - Applying winning index building patterns
     ///
     /// **PERFORMANCE ARCHITECTURE**: Uses the same lock-free work-stealing patterns that
-    /// made ParallelChunkStreaming and RayonWaitFree the top performers.
+    /// made ParallelChunkStreaming and WorkStealing the top performers.
     ///
     /// **Key Optimizations** (learned from top index builders):
     /// - **Lock-free work-stealing**: No mutex contention like winning strategies

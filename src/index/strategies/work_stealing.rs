@@ -8,7 +8,7 @@ use crate::FlagIndex;
 use super::{IndexingStrategy, BGZF_BLOCK_MAX_SIZE};
 use super::shared::{discover_blocks_fast, extract_flags_from_block_pooled};
 
-/// **RAYON WAIT-FREE STRATEGY** - The fastest performing approach (3.409s)
+/// **WORK STEALING STRATEGY** - The fastest performing approach (3.409s)
 /// 
 /// **Why This Strategy Wins:**
 /// - Simple discover-all-first + pure rayon work-stealing pattern
@@ -33,9 +33,9 @@ use super::shared::{discover_blocks_fast, extract_flags_from_block_pooled};
 /// - Memory: 1.5GB peak (stores all blocks, but worth it for speed)
 /// - CPU: 168.2% peak, 11.8% average (excellent utilization)
 /// - Suitable for: Production use as default strategy
-pub struct RayonWaitFreeStrategy;
+pub struct WorkStealingStrategy;
 
-impl IndexingStrategy for RayonWaitFreeStrategy {
+impl IndexingStrategy for WorkStealingStrategy {
     fn build(&self, bam_path: &str) -> Result<FlagIndex> {
         let file = File::open(bam_path)?;
         let mmap = unsafe { Mmap::map(&file)? };

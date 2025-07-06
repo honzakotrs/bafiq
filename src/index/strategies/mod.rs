@@ -5,8 +5,8 @@ use anyhow::Result;
 pub mod adaptive_memory_mapped;
 pub mod constant_memory;
 pub mod parallel_streaming;
-pub mod rayon_wait_free;
 pub mod shared;
+pub mod work_stealing;
 
 // Common types used across strategies
 #[derive(Clone)]

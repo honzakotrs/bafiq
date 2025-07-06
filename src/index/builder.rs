@@ -14,7 +14,7 @@ use std::thread as std_thread;
 use crate::index::strategies::shared::count_flags_in_block_optimized;
 use crate::index::strategies::{
     adaptive_memory_mapped::AdaptiveMemoryMappedStrategy, constant_memory::ConstantMemoryStrategy,
-    parallel_streaming::ChannelProducerConsumerStrategy, rayon_wait_free::RayonWaitFreeStrategy,
+    parallel_streaming::ChannelProducerConsumerStrategy, work_stealing::WorkStealingStrategy,
     IndexingStrategy,
 };
 
@@ -23,8 +23,8 @@ use crate::index::strategies::{
 pub enum BuildStrategy {
     /// Channel-based producer-consumer - crossbeam channels architecture (2.127s) 📡 CHANNELS
     ChannelProducerConsumer,
-    /// Wait-free processing - fastest performing approach (1.427s) 🏆 FASTEST
-    RayonWaitFree,
+    /// Work-stealing processing - fastest performing approach (1.427s) 🏆 FASTEST
+    WorkStealing,
     /// constant-memory processing - constant RAM footprint for any file size 💾 EFFICIENT
     ConstantMemory,
     /// Adaptive memory-mapped streaming - best of both worlds (performance + memory efficiency) 🧠 SMART
@@ -41,7 +41,7 @@ impl BuildStrategy {
     pub fn name(&self) -> &'static str {
         match self {
             BuildStrategy::ChannelProducerConsumer => "channel_producer_consumer",
-            BuildStrategy::RayonWaitFree => "rayon_wait_free",
+            BuildStrategy::WorkStealing => "work_stealing",
             BuildStrategy::ConstantMemory => "memory_friendly",
             BuildStrategy::AdaptiveMemoryMapped => "adaptive_memory_mapped",
         }
@@ -51,7 +51,7 @@ impl BuildStrategy {
     pub fn all_strategies() -> Vec<BuildStrategy> {
         vec![
             BuildStrategy::ChannelProducerConsumer,
-            BuildStrategy::RayonWaitFree,
+            BuildStrategy::WorkStealing,
             BuildStrategy::ConstantMemory,
             BuildStrategy::AdaptiveMemoryMapped,
         ]
@@ -65,7 +65,7 @@ impl BuildStrategy {
 
 impl Default for BuildStrategy {
     fn default() -> Self {
-        BuildStrategy::RayonWaitFree
+        BuildStrategy::WorkStealing
     }
 }
 
@@ -93,7 +93,7 @@ impl IndexBuilder {
             BuildStrategy::ChannelProducerConsumer => {
                 ChannelProducerConsumerStrategy.build(path_str)
             }
-            BuildStrategy::RayonWaitFree => RayonWaitFreeStrategy.build(path_str),
+            BuildStrategy::WorkStealing => WorkStealingStrategy.build(path_str),
             BuildStrategy::ConstantMemory => ConstantMemoryStrategy.build(path_str),
             BuildStrategy::AdaptiveMemoryMapped => AdaptiveMemoryMappedStrategy.build(path_str),
         }

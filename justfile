@@ -59,7 +59,7 @@ bench:
         echo "threads,strategy,timestamp_ms,memory_mb,cpu_percent" > "$MEMORY_CSV"
         
         # Strategies to test (core strategies and reference tools)
-        STRATEGIES=("adaptive-memory-mapped" "constant-memory" "channel-producer-consumer" "rayon-wait-free" "bafiq-fast-count" "samtools")
+        STRATEGIES=("adaptive-memory-mapped" "constant-memory" "channel-producer-consumer" "work-stealing" "bafiq-fast-count" "samtools")
         
         # Temporary file for collecting all results
         TEMP_RESULTS=$(mktemp)
@@ -333,7 +333,7 @@ bench:
         }
         
         # Generate plots for interesting strategies
-        PLOT_STRATEGIES=("adaptive-memory-mapped" "constant-memory" "rayon-wait-free" "channel-producer-consumer" "bafiq-fast-count")
+        PLOT_STRATEGIES=("adaptive-memory-mapped" "constant-memory" "work-stealing" "channel-producer-consumer" "bafiq-fast-count")
         for strategy in "${PLOT_STRATEGIES[@]}"; do
             for thread_count in "${THREAD_ARRAY[@]}"; do
                 generate_ascii_plot "$strategy" "$thread_count"
@@ -541,8 +541,8 @@ bench-view:
             exit 1
         fi
         
-        # Allow strategy specification (default: rayon-wait-free for best performance)
-        STRATEGY="${BENCH_STRATEGY:-rayon-wait-free}"
+        # Allow strategy specification (default: work-stealing for best performance)
+        STRATEGY="${BENCH_STRATEGY:-work-stealing}"
         
         # Function to monitor memory usage (same as bench command)
         monitor_memory() {
