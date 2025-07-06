@@ -4,3 +4,5 @@ target/
 *.sam
 *.bfi
 *.bai
+
+.DS_Store
