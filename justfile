@@ -48,8 +48,8 @@ bench:
         MEMORY_CSV="./benchmark_results/memory_samples_$(date +%Y%m%d_%H%M%S).csv"
         echo "threads,strategy,timestamp_ms,memory_mb,cpu_percent" > "$MEMORY_CSV"
         
-        # Strategies to test (including legacy methods for reference)
-        STRATEGIES=("memory-friendly" "parallel-streaming" "rayon-wait-free" "rayon-streaming-optimized" "zero-merge" "legacy-parallel-raw" "legacy-streaming-raw")
+        # Strategies to test (including legacy methods and samtools reference)
+        STRATEGIES=("memory-friendly" "parallel-streaming" "rayon-wait-free" "rayon-streaming-optimized" "zero-merge" "legacy-parallel-raw" "legacy-streaming-raw" "samtools")
         
         # Temporary file for collecting all results
         TEMP_RESULTS=$(mktemp)
@@ -103,41 +103,63 @@ bench:
                 # Time the index building with specific thread count
                 START_TIME=$(python3 -c "import time; print(int(time.time() * 1000))")
                 
-                # Map legacy strategy names to actual CLI strategy names
-                case "$strategy" in
-                    "legacy-parallel-raw")
-                        CLI_STRATEGY="parallel-streaming"
-                        ;;
-                    "legacy-streaming-raw")
-                        CLI_STRATEGY="rayon-streaming-optimized"
-                        ;;
-                    *)
-                        CLI_STRATEGY="$strategy"
-                        ;;
-                esac
-                
-                # Run bafiq with CLI threads argument in background to monitor it
-                ./target/release/bafiq --threads "$thread_count" index --strategy "$CLI_STRATEGY" "$BAFIQ_TEST_BAM" > /tmp/bafiq_output.log 2>&1 &
-                BAFIQ_PID=$!
+                # Handle different strategy types
+                if [ "$strategy" = "samtools" ]; then
+                    # Check if samtools is available
+                    if ! command -v samtools &> /dev/null; then
+                        echo "   ⚠️  samtools not found - skipping"
+                        continue
+                    fi
+                    
+                    # Run samtools view -c in background to monitor it
+                    samtools view -c "$BAFIQ_TEST_BAM" > /tmp/samtools_output.log 2>&1 &
+                    BENCHMARK_PID=$!
+                else
+                    # Map legacy strategy names to actual CLI strategy names
+                    case "$strategy" in
+                        "legacy-parallel-raw")
+                            CLI_STRATEGY="parallel-streaming"
+                            ;;
+                        "legacy-streaming-raw")
+                            CLI_STRATEGY="rayon-streaming-optimized"
+                            ;;
+                        *)
+                            CLI_STRATEGY="$strategy"
+                            ;;
+                    esac
+                    
+                    # Clean up any existing index to ensure fresh build (not needed for samtools)
+                    rm -f "${BAFIQ_TEST_BAM}.bfi"
+                    
+                    # Run bafiq with CLI threads argument in background to monitor it
+                    ./target/release/bafiq --threads "$thread_count" index --strategy "$CLI_STRATEGY" "$BAFIQ_TEST_BAM" > /tmp/bafiq_output.log 2>&1 &
+                    BENCHMARK_PID=$!
+                fi
                 
                 # Start memory monitoring in background
-                MEMORY_FILE=$(monitor_memory $BAFIQ_PID "$strategy" "$thread_count" "$START_TIME")
+                MEMORY_FILE=$(monitor_memory $BENCHMARK_PID "$strategy" "$thread_count" "$START_TIME")
                 
-                # Wait for bafiq to complete
-                wait $BAFIQ_PID
-                BAFIQ_EXIT_CODE=$?
+                # Wait for benchmark to complete
+                wait $BENCHMARK_PID
+                BENCHMARK_EXIT_CODE=$?
                 
                 END_TIME=$(python3 -c "import time; print(int(time.time() * 1000))")
                 DURATION=$((END_TIME - START_TIME))
                 DURATION_SEC=$(echo "scale=3; $DURATION / 1000" | bc -l 2>/dev/null || echo "0.000")
                 
-                if [ $BAFIQ_EXIT_CODE -eq 0 ]; then
-                    # Get index size
-                    if [ -f "${BAFIQ_TEST_BAM}.bfi" ]; then
-                        INDEX_SIZE=$(stat -f%z "${BAFIQ_TEST_BAM}.bfi" 2>/dev/null || stat -c%s "${BAFIQ_TEST_BAM}.bfi" 2>/dev/null || echo "0")
-                        INDEX_SIZE_MB=$(echo "scale=1; $INDEX_SIZE / 1024 / 1024" | bc -l 2>/dev/null || echo "0.0")
+                if [ $BENCHMARK_EXIT_CODE -eq 0 ]; then
+                    # Get index size (only for bafiq strategies)
+                    if [ "$strategy" = "samtools" ]; then
+                        INDEX_SIZE_MB="N/A"
+                        # Get record count from samtools output
+                        SAMTOOLS_RECORDS=$(cat /tmp/samtools_output.log 2>/dev/null || echo "0")
                     else
-                        INDEX_SIZE_MB="0.0"
+                        if [ -f "${BAFIQ_TEST_BAM}.bfi" ]; then
+                            INDEX_SIZE=$(stat -f%z "${BAFIQ_TEST_BAM}.bfi" 2>/dev/null || stat -c%s "${BAFIQ_TEST_BAM}.bfi" 2>/dev/null || echo "0")
+                            INDEX_SIZE_MB=$(echo "scale=1; $INDEX_SIZE / 1024 / 1024" | bc -l 2>/dev/null || echo "0.0")
+                        else
+                            INDEX_SIZE_MB="0.0"
+                        fi
                     fi
                     
                     # Calculate memory stats from samples
@@ -157,16 +179,27 @@ bench:
                     
                     PEAK_MEMORY_GB=$(echo "scale=1; $PEAK_MEMORY / 1024" | bc -l 2>/dev/null || echo "0.0")
                     
+                    # Convert N/A to 0.0 for CSV
+                    CSV_INDEX_SIZE=$([ "$INDEX_SIZE_MB" = "N/A" ] && echo "0.0" || echo "$INDEX_SIZE_MB")
+                    
                     # Add to CSV
-                    echo "$thread_count,$strategy,$DURATION,$PEAK_MEMORY,$AVG_MEMORY,$PEAK_CPU,$AVG_CPU,$INDEX_SIZE_MB,$SAMPLE_COUNT" >> "$COMBINED_CSV"
+                    echo "$thread_count,$strategy,$DURATION,$PEAK_MEMORY,$AVG_MEMORY,$PEAK_CPU,$AVG_CPU,$CSV_INDEX_SIZE,$SAMPLE_COUNT" >> "$COMBINED_CSV"
                     
                     # Store result for summary
                     echo "$thread_count,$strategy,$DURATION_SEC,$PEAK_MEMORY_GB,$AVG_MEMORY,$PEAK_CPU,$AVG_CPU,$INDEX_SIZE_MB" >> "$TEMP_RESULTS"
                     
-                    echo "   Time: ${DURATION_SEC}s, Peak Memory: ${PEAK_MEMORY_GB}GB, Avg CPU: ${AVG_CPU}%"
+                    if [ "$strategy" = "samtools" ]; then
+                        echo "   Time: ${DURATION_SEC}s, Peak Memory: ${PEAK_MEMORY_GB}GB, Avg CPU: ${AVG_CPU}%, Records: $SAMTOOLS_RECORDS"
+                    else
+                        echo "   Time: ${DURATION_SEC}s, Peak Memory: ${PEAK_MEMORY_GB}GB, Avg CPU: ${AVG_CPU}%"
+                    fi
                 else
                     echo "   ❌ FAILED"
-                    cat /tmp/bafiq_output.log
+                    if [ "$strategy" = "samtools" ]; then
+                        cat /tmp/samtools_output.log
+                    else
+                        cat /tmp/bafiq_output.log
+                    fi
                 fi
                 
                 # Clean up memory file
@@ -175,20 +208,7 @@ bench:
             echo ""
         done
         
-        # Run samtools reference benchmark
-        echo "Running cold start benchmark: samtools view -c"
-        if command -v samtools &> /dev/null; then
-            START_TIME=$(python3 -c "import time; print(int(time.time() * 1000))")
-            SAMTOOLS_COUNT=$(samtools view -c "$BAFIQ_TEST_BAM" 2>/dev/null || echo "0")
-            END_TIME=$(python3 -c "import time; print(int(time.time() * 1000))")
-            SAMTOOLS_DURATION=$((END_TIME - START_TIME))
-            SAMTOOLS_DURATION_SEC=$(echo "scale=3; $SAMTOOLS_DURATION / 1000" | bc -l 2>/dev/null || echo "0.000")
-            echo "   Time: ${SAMTOOLS_DURATION_SEC}s, Records: $SAMTOOLS_COUNT"
-            echo ""
-        else
-            echo "   ⚠️  samtools not found - skipping reference benchmark"
-            echo ""
-        fi
+
         
         # Generate ASCII memory plots
         echo "📊 Memory Usage Timeline (ASCII Plots):"
@@ -341,21 +361,25 @@ bench:
         echo "Speed Analysis:"
         echo "   Fastest strategies:"
         FASTEST_STRATEGIES=$(tail -n +2 "$COMBINED_CSV" | sort -t, -k3 -n | head -3)
+        
+        # Get samtools time for comparison
+        SAMTOOLS_TIME_MS=$(grep ",samtools," "$COMBINED_CSV" | head -1 | cut -d, -f3 2>/dev/null || echo "")
+        
         echo "$FASTEST_STRATEGIES" | head -1 | awk -F',' '{printf "   1. %s (%st) - %.3fs", $2, $1, $3/1000}'
-        if command -v samtools &> /dev/null && [ -n "$SAMTOOLS_DURATION_SEC" ]; then
-            echo "$FASTEST_STRATEGIES" | head -1 | awk -F',' -v samtools="$SAMTOOLS_DURATION_SEC" '{printf " (%.1fx faster than samtools)\n", samtools/($3/1000)}'
+        if [ -n "$SAMTOOLS_TIME_MS" ]; then
+            echo "$FASTEST_STRATEGIES" | head -1 | awk -F',' -v samtools_ms="$SAMTOOLS_TIME_MS" '{printf " (%.1fx faster than samtools)\n", samtools_ms/$3}'
         else
             echo ""
         fi
         echo "$FASTEST_STRATEGIES" | sed -n '2p' | awk -F',' '{printf "   2. %s (%st) - %.3fs", $2, $1, $3/1000}'
-        if command -v samtools &> /dev/null && [ -n "$SAMTOOLS_DURATION_SEC" ]; then
-            echo "$FASTEST_STRATEGIES" | sed -n '2p' | awk -F',' -v samtools="$SAMTOOLS_DURATION_SEC" '{printf " (%.1fx faster than samtools)\n", samtools/($3/1000)}'
+        if [ -n "$SAMTOOLS_TIME_MS" ]; then
+            echo "$FASTEST_STRATEGIES" | sed -n '2p' | awk -F',' -v samtools_ms="$SAMTOOLS_TIME_MS" '{printf " (%.1fx faster than samtools)\n", samtools_ms/$3}'
         else
             echo ""
         fi
         echo "$FASTEST_STRATEGIES" | sed -n '3p' | awk -F',' '{printf "   3. %s (%st) - %.3fs", $2, $1, $3/1000}'
-        if command -v samtools &> /dev/null && [ -n "$SAMTOOLS_DURATION_SEC" ]; then
-            echo "$FASTEST_STRATEGIES" | sed -n '3p' | awk -F',' -v samtools="$SAMTOOLS_DURATION_SEC" '{printf " (%.1fx faster than samtools)\n", samtools/($3/1000)}'
+        if [ -n "$SAMTOOLS_TIME_MS" ]; then
+            echo "$FASTEST_STRATEGIES" | sed -n '3p' | awk -F',' -v samtools_ms="$SAMTOOLS_TIME_MS" '{printf " (%.1fx faster than samtools)\n", samtools_ms/$3}'
         else
             echo ""
         fi
@@ -369,12 +393,13 @@ bench:
         echo "$BEST_CPU" | sed -n '3p' | awk -F',' '{printf "   3. %s (%st) - %.1f%% average CPU\n", $2, $1, $7}'
         echo ""
         
-        if command -v samtools &> /dev/null && [ -n "$SAMTOOLS_DURATION_SEC" ]; then
-            echo "🎯 Performance Gate: Beat samtools (${SAMTOOLS_DURATION_SEC}s target)"
-            BEST_TIME=$(tail -n +2 "$COMBINED_CSV" | sort -t, -k3 -n | head -1 | awk -F',' '{print $3/1000}')
-            BEST_STRATEGY=$(tail -n +2 "$COMBINED_CSV" | sort -t, -k3 -n | head -1 | awk -F',' '{print $2}')
+        if [ -n "$SAMTOOLS_TIME_MS" ]; then
+            SAMTOOLS_TIME_SEC=$(echo "scale=3; $SAMTOOLS_TIME_MS / 1000" | bc -l 2>/dev/null || echo "0.000")
+            echo "🎯 Performance Gate: Beat samtools (${SAMTOOLS_TIME_SEC}s target)"
+            BEST_TIME=$(tail -n +2 "$COMBINED_CSV" | grep -v ",samtools," | sort -t, -k3 -n | head -1 | awk -F',' '{print $3/1000}')
+            BEST_STRATEGY=$(tail -n +2 "$COMBINED_CSV" | grep -v ",samtools," | sort -t, -k3 -n | head -1 | awk -F',' '{print $2}')
             if [ -n "$BEST_TIME" ]; then
-                SPEEDUP=$(echo "scale=2; $SAMTOOLS_DURATION_SEC / $BEST_TIME" | bc -l 2>/dev/null || echo "1.0")
+                SPEEDUP=$(echo "scale=2; $SAMTOOLS_TIME_SEC / $BEST_TIME" | bc -l 2>/dev/null || echo "1.0")
                 echo "   Status: PASSED ✅"
                 echo "   Best strategy: $BEST_STRATEGY (${SPEEDUP}x faster than samtools)"
             fi
