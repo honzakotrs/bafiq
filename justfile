@@ -651,10 +651,10 @@ bench-view:
         # Temporary file for collecting all results
         TEMP_RESULTS=$(mktemp)
         
-        # Split comma-separated values for loops
-        IFS=',' read -ra THREAD_ARRAY <<< "$THREADS"
-        IFS=',' read -ra BAM_ARRAY <<< "$SOURCE_BAMS"
-        IFS=',' read -ra FLAG_ARRAY <<< "$FLAGS"
+        # Split comma-separated values for loops (using explicit subshell to avoid IFS issues)
+        THREAD_ARRAY=($(echo "$THREADS" | tr ',' ' '))
+        BAM_ARRAY=($(echo "$SOURCE_BAMS" | tr ',' ' '))
+        FLAG_ARRAY=($(echo "$FLAGS" | tr ',' ' '))
         
         # Nested loops for BAM files and flags
         for bam_file in "${BAM_ARRAY[@]}"; do
