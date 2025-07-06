@@ -6,42 +6,10 @@ use memmap2::Mmap;
 use std::fs::File;
 use std::sync::Arc;
 
-use super::shared::{discover_blocks_streaming, extract_flags_from_block_pooled};
-use super::{IndexingStrategy, BGZF_BLOCK_MAX_SIZE};
+use super::shared::extract_flags_from_block_pooled;
+use super::{IndexingStrategy, BGZF_BLOCK_MAX_SIZE, BGZF_FOOTER_SIZE, BGZF_HEADER_SIZE};
 use crate::FlagIndex;
 
-/// **PARALLEL STREAMING STRATEGY** - Canonical crossbeam channels producer-consumer (2.127s)
-///
-/// **Architectural Significance:**
-/// - Primary example of crossbeam unbounded channels for work distribution
-/// - Clean producer-consumer pattern with automatic coordination
-/// - Demonstrates that simple channel-based architectures can be highly effective
-/// - Serves as the "baseline" streaming implementation for comparison
-///
-/// **Why This Strategy Remains Valuable:**
-/// - Cleanest implementation of producer-consumer pattern (educational value)
-/// - Excellent performance across all thread counts and file sizes
-/// - Demonstrates crossbeam channels' effectiveness vs other coordination primitives
-/// - Immediate processing start (no discovery phase latency)
-/// - Automatic backpressure handling through channel semantics
-///
-/// **Architecture:**
-/// - Producer thread: Single-threaded BGZF block discovery → immediate streaming
-/// - Consumer threads: Multiple workers pull blocks via crossbeam unbounded channels
-/// - Processing: Thread-local buffers for decompression and flag extraction
-/// - Coordination: Channels provide natural synchronization without explicit locking
-/// - Merging: Sequential merge of worker results
-///
-/// **Performance Characteristics:**
-/// - Time: 2.127s @ 10 threads (excellent scaling)
-/// - Memory: 1.3GB peak (streaming keeps memory reasonable)
-/// - CPU: 893.9% peak (strong utilization)
-/// - Suitable for: When simplicity and reliable performance are priorities
-///
-/// **Comparison with Other Patterns:**
-/// - vs rayon-wait-free: +0.7s slower but much simpler architecture
-/// - vs lock-free queues: Channels provide better coordination primitives
-/// - vs bounded channels: Unbounded eliminates receiver contention
 pub struct ParallelStreamingStrategy;
 
 impl IndexingStrategy for ParallelStreamingStrategy {
@@ -57,21 +25,46 @@ impl IndexingStrategy for ParallelStreamingStrategy {
         crossbeam::thread::scope(|s| {
             // Producer thread: discovers complete BGZF blocks and streams them immediately
             let data_producer = Arc::clone(&data);
-            let sender_clone = sender.clone();
-            s.spawn(move |_| -> Result<()> {
-                // Use shared discovery function for consistency and maintainability
-                discover_blocks_streaming(&data_producer, |block_info| {
-                    // Send block immediately: (start_pos, total_size, block_offset)
-                    sender_clone.send((
-                        block_info.start_pos,
-                        block_info.total_size,
-                        block_info.start_pos as i64,
-                    )).map_err(|_| anyhow::anyhow!("Channel send failed"))?;
-                    Ok(())
-                })?;
+            s.spawn(move |_| {
+                let mut pos = 0;
+                let data_len = data_producer.len();
                 
-                drop(sender_clone);
-                Ok(())
+                while pos < data_len {
+                    if pos + BGZF_HEADER_SIZE > data_len {
+                        break;
+                    }
+                    
+                    let header = &data_producer[pos..pos + BGZF_HEADER_SIZE];
+                    
+                    // Validate GZIP magic
+                    if header[0..2] != [0x1f, 0x8b] {
+                        eprintln!("Invalid GZIP header at position {}", pos);
+                        break;
+                    }
+                    
+                    // Extract block size
+                    let bsize = u16::from_le_bytes([header[16], header[17]]) as usize;
+                    let total_size = bsize + 1;
+                    
+                    // Validate block size
+                    if total_size < BGZF_HEADER_SIZE + BGZF_FOOTER_SIZE || total_size > 65536 {
+                        eprintln!("Invalid BGZF block size: {}", total_size);
+                        break;
+                    }
+                    
+                    if pos + total_size > data_len {
+                        break; // Incomplete block at end
+                    }
+                    
+                    // Send block immediately: (start_pos, total_size, block_offset)
+                    if sender.send((pos, total_size, pos as i64)).is_err() {
+                        break; // Receivers hung up
+                    }
+                    
+                    pos += total_size;
+                }
+                
+                drop(sender);
             });
             
             // Consumer threads: process blocks as they arrive
