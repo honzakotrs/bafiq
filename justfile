@@ -441,16 +441,15 @@ bench:
         
         if [ -n "$SAMTOOLS_TIME_MS" ]; then
             SAMTOOLS_TIME_SEC=$(echo "scale=3; $SAMTOOLS_TIME_MS / 1000" | bc -l 2>/dev/null || echo "0.000")
-            echo "🎯 Performance Gate: Beat samtools (${SAMTOOLS_TIME_SEC}s target)"
             BEST_TIME=$(tail -n +2 "$COMBINED_CSV" | grep -v ",samtools," | sort -t, -k3 -n | head -1 | awk -F',' '{print $3/1000}')
             BEST_STRATEGY=$(tail -n +2 "$COMBINED_CSV" | grep -v ",samtools," | sort -t, -k3 -n | head -1 | awk -F',' '{print $2}')
             if [ -n "$BEST_TIME" ]; then
                 SPEEDUP=$(echo "scale=2; $SAMTOOLS_TIME_SEC / $BEST_TIME" | bc -l 2>/dev/null || echo "1.0")
-                echo "   Status: PASSED ✅"
+                echo "   Status: PASSED"
                 echo "   Best strategy: $BEST_STRATEGY (${SPEEDUP}x faster than samtools)"
             fi
         else
-            echo "🎯 Performance Gate: samtools not available for comparison"
+            echo "   Status: samtools not available for comparison"
         fi
         echo ""
         
