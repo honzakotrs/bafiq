@@ -432,6 +432,7 @@ impl FlagIndex {
         required_bits: u16,
         forbidden_bits: u16,
         writer: &mut Writer,
+        thread_count: Option<usize>,
     ) -> Result<()> {
         use crossbeam::channel::unbounded;
         use crossbeam::thread;
@@ -462,7 +463,7 @@ impl FlagIndex {
 
         thread::scope(|s| {
             // **PRODUCER WORKERS**: Parallel block processing with work-stealing
-            let num_threads = rayon::current_num_threads();
+            let num_threads = thread_count.unwrap_or_else(|| rayon::current_num_threads());
             let chunk_size = (sorted_blocks.len() / num_threads).max(1);
 
             let producer_handles: Vec<_> = sorted_blocks

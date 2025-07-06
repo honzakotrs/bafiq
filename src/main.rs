@@ -368,7 +368,7 @@ fn main() -> Result<()> {
     }
 
     match cli.cmd {
-        Commands::View(args) => cmd_view(args),
+        Commands::View(args) => cmd_view(args, cli.threads),
         Commands::Index(args) => cmd_index(args),
         Commands::Query(args) => cmd_query(args),
         Commands::FastCount {
@@ -461,7 +461,7 @@ fn cmd_index(args: IndexArgs) -> Result<()> {
 
 /// `bafiq view [options] <input.bam>`
 /// Outputs matching reads in SAM format on stdout.
-fn cmd_view(args: SharedArgs) -> Result<()> {
+fn cmd_view(args: SharedArgs, thread_count: Option<usize>) -> Result<()> {
     let (required_bits, forbidden_bits) = args.gather_bits()?;
     let input_str = args
         .input
@@ -489,6 +489,7 @@ fn cmd_view(args: SharedArgs) -> Result<()> {
         required_bits,
         forbidden_bits,
         &mut writer,
+        thread_count,
     )?;
 
     Ok(())
