@@ -6,8 +6,6 @@ use std::io::{BufReader, BufWriter, Write};
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-// Removed unused IndexSerializationTrait (legacy trait replaced by concrete SerializableIndex)
-
 /// Version information for backwards compatibility
 const BAFIQ_FORMAT_VERSION: u32 = 1;
 const BAFIQ_MAGIC: &[u8] = b"BAFIQ\x00\x01";
@@ -37,7 +35,7 @@ pub struct SerializableIndex {
 /// Index storage format variants
 #[derive(Debug, Serialize, Deserialize)]
 pub enum IndexFormat {
-    /// Uncompressed flag index (legacy compatibility)
+    /// Uncompressed flag index
     Uncompressed(FlagIndex),
 
     /// Multi-level compressed flag index (preferred)

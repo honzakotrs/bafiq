@@ -215,11 +215,6 @@ struct BenchmarkResult {
 enum BenchmarkEntry {
     /// Strategy-based benchmark using IndexBuilder
     Strategy(BuildStrategy),
-    /// Legacy baseline benchmark with custom implementation
-    Legacy {
-        name: &'static str,
-        runner: fn(&str) -> Result<FlagIndex>,
-    },
 }
 
 impl BenchmarkEntry {
@@ -227,7 +222,6 @@ impl BenchmarkEntry {
     fn name(&self) -> &str {
         match self {
             BenchmarkEntry::Strategy(strategy) => strategy.name(),
-            BenchmarkEntry::Legacy { name, .. } => name,
         }
     }
 
@@ -238,7 +232,6 @@ impl BenchmarkEntry {
                 let builder = IndexBuilder::with_strategy(*strategy);
                 builder.build(bam_path)
             }
-            BenchmarkEntry::Legacy { runner, .. } => runner(bam_path),
         }
     }
 
