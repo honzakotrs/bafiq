@@ -244,17 +244,7 @@ impl BenchmarkEntry {
 
     /// Get all benchmark entries to run
     fn all_entries() -> Vec<BenchmarkEntry> {
-        let mut entries = vec![
-            // Legacy baseline implementations (for comparison)
-            BenchmarkEntry::Legacy {
-                name: "legacy_parallel_raw",
-                runner: |path| benchmark::build_flag_index_parallel(path),
-            },
-            BenchmarkEntry::Legacy {
-                name: "legacy_streaming_raw",
-                runner: |path| benchmark::build_flag_index_streaming_parallel(path),
-            },
-        ];
+        let mut entries = vec![];
 
         // Add all strategy-based benchmarks (use strategy.name() for consistent naming)
         for strategy in BuildStrategy::benchmark_strategies() {
