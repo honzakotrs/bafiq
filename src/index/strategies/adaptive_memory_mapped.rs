@@ -46,8 +46,6 @@ impl IndexingStrategy for AdaptiveMemoryMappedStrategy {
         let start_time = Instant::now();
         
         println!("🎯 ADAPTIVE MEMORY-MAPPED STREAMING STRATEGY");
-        println!("   🧠 Real-time memory adaptation with multi-tier fallback");
-        println!("   🚀 Hybrid: Memory mapping + sliding windows + work-stealing");
         
         // **ADAPTIVE MEMORY CONTROLLER**
         let memory_controller = Arc::new(AdaptiveMemoryController::new()?);
@@ -77,7 +75,7 @@ impl AdaptiveMemoryMappedStrategy {
         let data = Arc::new(mmap);
         let file_size = data.len();
         
-        println!("   📁 File: {:.1}GB mapped into memory", file_size as f64 / (1024.0 * 1024.0 * 1024.0));
+        // File mapped into memory
         
         let mut final_index = FlagIndex::new();
         let mut window_start = 0;
@@ -94,12 +92,7 @@ impl AdaptiveMemoryMappedStrategy {
             let window_end = std::cmp::min(window_start + optimal_window_size, file_size);
             let window_data = &data[window_start..window_end];
             
-            println!("🔍 Window {}: {}MB @ {}MB, Memory: {}MB, Mode: {}", 
-                     window_count,
-                     (window_end - window_start) / (1024 * 1024),
-                     window_start / (1024 * 1024),
-                     current_memory_mb,
-                     memory_controller.get_current_mode_name());
+            // Window processing (reduced logging)
             
             // **PROCESS WINDOW WITH WORK-STEALING**
             let window_index = self.process_window_work_stealing(window_data, window_start, &memory_controller)?;
@@ -108,7 +101,6 @@ impl AdaptiveMemoryMappedStrategy {
             final_index.merge(window_index);
             
             // **ADAPTIVE WINDOW ADVANCEMENT** - Find next complete block boundary
-            let blocks_processed = final_index.total_records();
             let advancement = self.find_safe_advancement(window_data, optimal_window_size)?;
             
             window_start += advancement;
@@ -116,7 +108,7 @@ impl AdaptiveMemoryMappedStrategy {
             // **MEMORY PRESSURE CHECK** - Trigger GC if needed
             memory_controller.check_memory_pressure()?;
             
-            println!("   ✅ Window processed, {} total records", blocks_processed);
+            // Window processed
         }
         
         let final_memory = memory_controller.get_current_memory_usage();
@@ -190,7 +182,7 @@ impl AdaptiveMemoryMappedStrategy {
     }
     
     /// **FALLBACK STREAMING MODE** - When memory mapping is not possible
-    fn fallback_streaming_mode(&self, bam_path: &str, memory_controller: &Arc<AdaptiveMemoryController>) -> Result<FlagIndex> {
+    fn fallback_streaming_mode(&self, bam_path: &str, _memory_controller: &Arc<AdaptiveMemoryController>) -> Result<FlagIndex> {
         // Delegate to ConstantMemory strategy implementation
         // This is our proven fallback for memory-constrained environments
         use super::constant_memory::ConstantMemoryStrategy;
@@ -241,7 +233,7 @@ impl AdaptiveMemoryController {
         let initial_memory = Self::get_system_memory_usage()?;
         let memory_budget = initial_memory + 512; // Allow 512MB above baseline
         
-        println!("   💾 Initial memory: {}MB, Budget: {}MB", initial_memory, memory_budget);
+        // Memory controller initialized
         
         Ok(Self {
             initial_memory_mb: initial_memory,
@@ -290,25 +282,14 @@ impl AdaptiveMemoryController {
         }
     }
     
-    fn get_current_mode_name(&self) -> &'static str {
-        match self.current_mode.load(Ordering::Relaxed) {
-            0 => "High Performance",
-            1 => "Balanced",
-            2 => "Memory Conservative",
-            3 => "Emergency",
-            _ => "Unknown",
-        }
-    }
+
     
     fn check_memory_pressure(&self) -> Result<()> {
         let current_memory = self.get_current_memory_usage();
         let budget = self.memory_budget_mb.load(Ordering::Relaxed);
         
         if current_memory > budget {
-            println!("   ⚠️  Memory pressure detected: {}MB > {}MB budget", current_memory, budget);
-            
-            // **TRIGGER GARBAGE COLLECTION**
-            // This is a hint to the runtime to reclaim memory
+            // Memory pressure detected - trigger garbage collection
             std::thread::yield_now();
         }
         
