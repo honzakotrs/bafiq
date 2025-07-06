@@ -13,22 +13,19 @@ use std::thread as std_thread;
 // Import strategies
 use crate::index::strategies::shared::count_flags_in_block_optimized;
 use crate::index::strategies::{
-    memory_friendly::MemoryFriendlyStrategy, parallel_streaming::ParallelStreamingStrategy,
-    rayon_streaming_optimized::RayonStreamingOptimizedStrategy,
+    memory_friendly::ConstantMemoryStrategy, parallel_streaming::ParallelStreamingStrategy,
     rayon_wait_free::RayonWaitFreeStrategy, IndexingStrategy,
 };
 
 /// Available index building strategies
 #[derive(Debug, Clone, Copy)]
 pub enum BuildStrategy {
-    /// Streaming parallel processing - simplest high-performance producer-consumer (3.433s)
+    /// Streaming parallel processing - crossbeam channels producer-consumer (2.127s)
     ParallelStreaming,
-    /// Streaming evolution with work-stealing - hybrid producer-consumer + work-stealing (3.609s)
-    RayonStreamingOptimized,
-    /// Wait-free processing - fastest performing approach (3.409s) 🏆 FASTEST
+    /// Wait-free processing - fastest performing approach (1.427s) 🏆 FASTEST
     RayonWaitFree,
     /// Memory-friendly processing - constant RAM footprint for any file size 💾 EFFICIENT
-    MemoryFriendly,
+    ConstantMemory,
 }
 
 /// Primary interface for building flag indexes with different strategies
@@ -41,9 +38,8 @@ impl BuildStrategy {
     pub fn name(&self) -> &'static str {
         match self {
             BuildStrategy::ParallelStreaming => "parallel_streaming",
-            BuildStrategy::RayonStreamingOptimized => "rayon_streaming_optimized",
             BuildStrategy::RayonWaitFree => "rayon_wait_free",
-            BuildStrategy::MemoryFriendly => "memory_friendly",
+            BuildStrategy::ConstantMemory => "memory_friendly",
         }
     }
 
@@ -51,9 +47,8 @@ impl BuildStrategy {
     pub fn all_strategies() -> Vec<BuildStrategy> {
         vec![
             BuildStrategy::ParallelStreaming,
-            BuildStrategy::RayonStreamingOptimized,
             BuildStrategy::RayonWaitFree,
-            BuildStrategy::MemoryFriendly,
+            BuildStrategy::ConstantMemory,
         ]
     }
 
@@ -91,11 +86,8 @@ impl IndexBuilder {
 
         match self.strategy {
             BuildStrategy::ParallelStreaming => ParallelStreamingStrategy.build(path_str),
-            BuildStrategy::RayonStreamingOptimized => {
-                RayonStreamingOptimizedStrategy.build(path_str)
-            }
             BuildStrategy::RayonWaitFree => RayonWaitFreeStrategy.build(path_str),
-            BuildStrategy::MemoryFriendly => MemoryFriendlyStrategy.build(path_str),
+            BuildStrategy::ConstantMemory => ConstantMemoryStrategy.build(path_str),
         }
     }
 

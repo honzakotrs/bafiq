@@ -59,7 +59,7 @@ bench:
         echo "threads,strategy,timestamp_ms,memory_mb,cpu_percent" > "$MEMORY_CSV"
         
         # Strategies to test (core strategies and reference tools)
-        STRATEGIES=("memory-friendly" "parallel-streaming" "rayon-wait-free" "rayon-streaming-optimized" "bafiq-fast-count" "samtools")
+        STRATEGIES=("memory-friendly" "parallel-streaming" "rayon-wait-free" "bafiq-fast-count" "samtools")
         
         # Temporary file for collecting all results
         TEMP_RESULTS=$(mktemp)

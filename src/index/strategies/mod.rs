@@ -4,7 +4,6 @@ use anyhow::Result;
 // Re-export all strategy implementations
 pub mod memory_friendly;
 pub mod parallel_streaming;
-pub mod rayon_streaming_optimized;
 pub mod rayon_wait_free;
 pub mod shared;
 

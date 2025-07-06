@@ -38,9 +38,9 @@ struct BlockInfo {
 /// - Working memory independent of file size
 /// 
 /// **Target**: O(1) memory usage independent of input file size
-pub struct MemoryFriendlyStrategy;
+pub struct ConstantMemoryStrategy;
 
-impl IndexingStrategy for MemoryFriendlyStrategy {
+impl IndexingStrategy for ConstantMemoryStrategy {
     fn build(&self, bam_path: &str) -> Result<FlagIndex> {
         // **CONSTANT MEMORY CONFIGURATION**
         const CHUNK_SIZE_MB: usize = 32;               // 32MB chunks for good I/O

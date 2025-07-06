@@ -9,27 +9,23 @@ use bafiq::{BuildStrategy, IndexBuilder, IndexManager, SerializableIndex};
 /// CLI-friendly strategy names that map to BuildStrategy
 #[derive(Debug, Clone, ValueEnum)]
 pub enum CliStrategy {
-    /// Streaming parallel processing - simplest high-performance producer-consumer (3.433s)
+    /// Streaming parallel processing - crossbeam channels producer-consumer (2.127s)
     #[value(name = "parallel-streaming")]
     ParallelStreaming,
-    /// Streaming evolution with work-stealing - hybrid producer-consumer + work-stealing (3.609s)
-    #[value(name = "rayon-streaming-optimized")]
-    RayonStreamingOptimized,
-    /// Wait-free processing - fastest performing approach (3.409s)
+    /// Wait-free processing - fastest performing approach (1.427s)
     #[value(name = "rayon-wait-free")]
     RayonWaitFree,
     /// Memory-friendly processing - constant RAM footprint for any file size
     #[value(name = "memory-friendly")]
-    MemoryFriendly,
+    ConstantMemory,
 }
 
 impl From<CliStrategy> for BuildStrategy {
     fn from(cli_strategy: CliStrategy) -> Self {
         match cli_strategy {
             CliStrategy::ParallelStreaming => BuildStrategy::ParallelStreaming,
-            CliStrategy::RayonStreamingOptimized => BuildStrategy::RayonStreamingOptimized,
             CliStrategy::RayonWaitFree => BuildStrategy::RayonWaitFree,
-            CliStrategy::MemoryFriendly => BuildStrategy::MemoryFriendly,
+            CliStrategy::ConstantMemory => BuildStrategy::ConstantMemory,
         }
     }
 }
