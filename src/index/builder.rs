@@ -13,8 +13,9 @@ use std::thread as std_thread;
 // Import strategies
 use crate::index::strategies::shared::count_flags_in_block_optimized;
 use crate::index::strategies::{
-    memory_friendly::ConstantMemoryStrategy, parallel_streaming::ParallelStreamingStrategy,
-    rayon_wait_free::RayonWaitFreeStrategy, IndexingStrategy,
+    adaptive_memory_mapped::AdaptiveMemoryMappedStrategy, memory_friendly::ConstantMemoryStrategy,
+    parallel_streaming::ParallelStreamingStrategy, rayon_wait_free::RayonWaitFreeStrategy,
+    IndexingStrategy,
 };
 
 /// Available index building strategies
@@ -24,8 +25,10 @@ pub enum BuildStrategy {
     ParallelStreaming,
     /// Wait-free processing - fastest performing approach (1.427s) 🏆 FASTEST
     RayonWaitFree,
-    /// Memory-friendly processing - constant RAM footprint for any file size 💾 EFFICIENT
+    /// constant-memory processing - constant RAM footprint for any file size 💾 EFFICIENT
     ConstantMemory,
+    /// Adaptive memory-mapped streaming - best of both worlds (performance + memory efficiency) 🧠 SMART
+    AdaptiveMemoryMapped,
 }
 
 /// Primary interface for building flag indexes with different strategies
@@ -40,6 +43,7 @@ impl BuildStrategy {
             BuildStrategy::ParallelStreaming => "parallel_streaming",
             BuildStrategy::RayonWaitFree => "rayon_wait_free",
             BuildStrategy::ConstantMemory => "memory_friendly",
+            BuildStrategy::AdaptiveMemoryMapped => "adaptive_memory_mapped",
         }
     }
 
@@ -49,6 +53,7 @@ impl BuildStrategy {
             BuildStrategy::ParallelStreaming,
             BuildStrategy::RayonWaitFree,
             BuildStrategy::ConstantMemory,
+            BuildStrategy::AdaptiveMemoryMapped,
         ]
     }
 
@@ -88,6 +93,7 @@ impl IndexBuilder {
             BuildStrategy::ParallelStreaming => ParallelStreamingStrategy.build(path_str),
             BuildStrategy::RayonWaitFree => RayonWaitFreeStrategy.build(path_str),
             BuildStrategy::ConstantMemory => ConstantMemoryStrategy.build(path_str),
+            BuildStrategy::AdaptiveMemoryMapped => AdaptiveMemoryMappedStrategy.build(path_str),
         }
     }
 

@@ -15,9 +15,12 @@ pub enum CliStrategy {
     /// Wait-free processing - fastest performing approach (1.427s)
     #[value(name = "rayon-wait-free")]
     RayonWaitFree,
-    /// Memory-friendly processing - constant RAM footprint for any file size
-    #[value(name = "memory-friendly")]
+    /// constant-memory processing - constant RAM footprint for any file size
+    #[value(name = "constant-memory")]
     ConstantMemory,
+    /// Adaptive memory-mapped streaming - best of both worlds (performance + memory efficiency)
+    #[value(name = "adaptive-memory-mapped")]
+    AdaptiveMemoryMapped,
 }
 
 impl From<CliStrategy> for BuildStrategy {
@@ -26,6 +29,7 @@ impl From<CliStrategy> for BuildStrategy {
             CliStrategy::ParallelStreaming => BuildStrategy::ParallelStreaming,
             CliStrategy::RayonWaitFree => BuildStrategy::RayonWaitFree,
             CliStrategy::ConstantMemory => BuildStrategy::ConstantMemory,
+            CliStrategy::AdaptiveMemoryMapped => BuildStrategy::AdaptiveMemoryMapped,
         }
     }
 }
