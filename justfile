@@ -687,15 +687,12 @@ bench-view:
                         CSV_THREADS="0"
                     fi
                     
-                    # Clean up any existing index to ensure fresh build
-                    rm -f "${bam_file}.bfi"
-                    
-                    echo "🔧 Building index if needed..."
-                    echo "   Strategy: $STRATEGY"
-                    if [ "$thread_count" = "auto" ]; then
-                        ./target/release/bafiq index "$bam_file" --strategy "$STRATEGY"
-                    else
-                        ./target/release/bafiq --threads "$thread_count" index "$bam_file" --strategy "$STRATEGY"
+                    # Check if index exists
+                    if [ ! -f "${bam_file}.bfi" ]; then
+                        echo "⚠️  Warning: Index not found for $(basename "$bam_file")"
+                        echo "   Expected: ${bam_file}.bfi"
+                        echo "   Please build index first: bafiq index \"$bam_file\""
+                        continue
                     fi
             
                     echo ""
