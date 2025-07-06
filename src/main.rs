@@ -1,5 +1,6 @@
 use anyhow::{anyhow, Result};
 use clap::{Parser, Subcommand, ValueEnum};
+use rayon::ThreadPoolBuilder;
 use rust_htslib::bam::{Format, Read as BamRead, Writer};
 use std::path::{Path, PathBuf};
 
@@ -351,10 +352,25 @@ enum Commands {
 struct Cli {
     #[command(subcommand)]
     cmd: Commands,
+
+    /// Maximum number of threads to use for parallel processing
+    /// (default: use all available cores)
+    #[arg(long = "threads", short = 't', global = true)]
+    threads: Option<usize>,
 }
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+
+    // Set global thread limit if specified
+    if let Some(threads) = cli.threads {
+        ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .build_global()
+            .map_err(|e| anyhow!("Failed to set thread limit: {}", e))?;
+        eprintln!("Thread limit set to: {}", threads);
+    }
+
     match cli.cmd {
         Commands::View(args) => cmd_view(args),
         Commands::Index(args) => cmd_index(args),

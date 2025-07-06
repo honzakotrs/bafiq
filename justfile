@@ -8,7 +8,8 @@ build:
     @echo "Building bafiq..."
     cargo build --release
 
-# Run index build benchmarks (fast simple timing by default)
+# Run index build benchmarks with thread scaling analysis
+# Uses default threads: 1,2
 bench:
     #!/usr/bin/env bash
     if [ -z "${BAFIQ_TEST_BAM:-}" ]; then
@@ -16,13 +17,380 @@ bench:
         echo "   Example: export BAFIQ_TEST_BAM=/path/to/test.bam"
         echo "   Then run: just bench"
     else
-        echo "Running fast index build benchmarks..."
-        echo "   Simple timing mode for quick iteration (sequential strategy muted)"
-        echo "   Optional: Set BAFIQ_BENCH_SEQUENTIAL=1 to include slow sequential strategy"
-        if [[ "$OSTYPE" == "linux-gnu"* ]]; then
-            echo "   On Linux, run with sudo for full cache clearing: sudo -E just bench"
+        # Define thread counts to test (default: 1,2)
+        THREADS="1,2"
+        
+        echo "Running thread scaling benchmarks (development mode)..."
+        echo "Thread Scaling Benchmarking with file: $(basename "$BAFIQ_TEST_BAM")"
+        echo "Machine Configuration:"
+        echo "   Available CPU cores: $(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo "unknown")"
+        echo "   Thread counts to test: $THREADS"
+        echo "   Fast development mode with resource monitoring"
+        
+        # Get original BAM size
+        BAM_SIZE=$(stat -f%z "$BAFIQ_TEST_BAM" 2>/dev/null || stat -c%s "$BAFIQ_TEST_BAM" 2>/dev/null || echo "0")
+        BAM_SIZE_GB=$(echo "scale=1; $BAM_SIZE / 1024 / 1024 / 1024" | bc -l 2>/dev/null || echo "0.0")
+        echo "Original BAM size: ${BAM_SIZE_GB} GB"
+        echo "===================================================================================================="
+        
+        # Build bafiq first
+        echo "🔧 Building bafiq..."
+        cargo build --release
+        
+        # Create output directory
+        mkdir -p ./benchmark_results
+        COMBINED_CSV="./benchmark_results/thread_scaling_$(date +%Y%m%d_%H%M%S).csv"
+        
+        # Initialize CSV headers
+        echo "threads,strategy,time_ms,peak_memory_mb,avg_memory_mb,peak_cpu_percent,avg_cpu_percent,index_size_mb,samples" > "$COMBINED_CSV"
+        
+        # Detailed memory sampling CSV (separate file)
+        MEMORY_CSV="./benchmark_results/memory_samples_$(date +%Y%m%d_%H%M%S).csv"
+        echo "threads,strategy,timestamp_ms,memory_mb,cpu_percent" > "$MEMORY_CSV"
+        
+        # Strategies to test (including legacy methods for reference)
+        STRATEGIES=("memory-friendly" "parallel-streaming" "rayon-wait-free" "rayon-streaming-optimized" "zero-merge" "legacy-parallel-raw" "legacy-streaming-raw")
+        
+        # Temporary file for collecting all results
+        TEMP_RESULTS=$(mktemp)
+        
+        # Function to monitor memory usage
+        monitor_memory() {
+            local pid=$1
+            local strategy=$2
+            local threads=$3
+            local start_time=$4
+            local memory_file=$(mktemp)
+            
+            while kill -0 $pid 2>/dev/null; do
+                current_time=$(python3 -c "import time; print(int(time.time() * 1000))")
+                elapsed_ms=$((current_time - start_time))
+                
+                # Get memory usage (RSS) in MB
+                if [[ "$OSTYPE" == "darwin"* ]]; then
+                    # macOS
+                    memory_kb=$(ps -o rss= -p $pid 2>/dev/null || echo "0")
+                else
+                    # Linux
+                    memory_kb=$(ps -o rss= -p $pid 2>/dev/null || echo "0")
+                fi
+                memory_mb=$(echo "scale=1; $memory_kb / 1024" | bc -l 2>/dev/null || echo "0.0")
+                
+                # Get CPU usage (simplified)
+                cpu_percent=$(ps -o %cpu= -p $pid 2>/dev/null || echo "0.0")
+                
+                # Record sample
+                echo "$elapsed_ms,$memory_mb,$cpu_percent" >> "$memory_file"
+                echo "$threads,$strategy,$elapsed_ms,$memory_mb,$cpu_percent" >> "$MEMORY_CSV"
+                
+                sleep 0.1  # Sample every 100ms
+            done
+            
+            echo "$memory_file"
+        }
+        
+        # Split threads by comma and run benchmarks for each
+        IFS=',' read -ra THREAD_ARRAY <<< "$THREADS"
+        for thread_count in "${THREAD_ARRAY[@]}"; do
+            echo "Running with $thread_count threads..."
+            
+            for strategy in "${STRATEGIES[@]}"; do
+                echo "Running monitored benchmark: $strategy (${thread_count} threads)"
+                
+                # Clean up any existing index to ensure fresh build
+                rm -f "${BAFIQ_TEST_BAM}.bfi"
+                
+                # Time the index building with specific thread count
+                START_TIME=$(python3 -c "import time; print(int(time.time() * 1000))")
+                
+                # Map legacy strategy names to actual CLI strategy names
+                case "$strategy" in
+                    "legacy-parallel-raw")
+                        CLI_STRATEGY="parallel-streaming"
+                        ;;
+                    "legacy-streaming-raw")
+                        CLI_STRATEGY="rayon-streaming-optimized"
+                        ;;
+                    *)
+                        CLI_STRATEGY="$strategy"
+                        ;;
+                esac
+                
+                # Run bafiq with CLI threads argument in background to monitor it
+                ./target/release/bafiq --threads "$thread_count" index --strategy "$CLI_STRATEGY" "$BAFIQ_TEST_BAM" > /tmp/bafiq_output.log 2>&1 &
+                BAFIQ_PID=$!
+                
+                # Start memory monitoring in background
+                MEMORY_FILE=$(monitor_memory $BAFIQ_PID "$strategy" "$thread_count" "$START_TIME")
+                
+                # Wait for bafiq to complete
+                wait $BAFIQ_PID
+                BAFIQ_EXIT_CODE=$?
+                
+                END_TIME=$(python3 -c "import time; print(int(time.time() * 1000))")
+                DURATION=$((END_TIME - START_TIME))
+                DURATION_SEC=$(echo "scale=3; $DURATION / 1000" | bc -l 2>/dev/null || echo "0.000")
+                
+                if [ $BAFIQ_EXIT_CODE -eq 0 ]; then
+                    # Get index size
+                    if [ -f "${BAFIQ_TEST_BAM}.bfi" ]; then
+                        INDEX_SIZE=$(stat -f%z "${BAFIQ_TEST_BAM}.bfi" 2>/dev/null || stat -c%s "${BAFIQ_TEST_BAM}.bfi" 2>/dev/null || echo "0")
+                        INDEX_SIZE_MB=$(echo "scale=1; $INDEX_SIZE / 1024 / 1024" | bc -l 2>/dev/null || echo "0.0")
+                    else
+                        INDEX_SIZE_MB="0.0"
+                    fi
+                    
+                    # Calculate memory stats from samples
+                    if [ -f "$MEMORY_FILE" ]; then
+                        PEAK_MEMORY=$(awk -F',' 'NR>1 && $2>max {max=$2} END {print max+0}' "$MEMORY_FILE" 2>/dev/null || echo "0.0")
+                        AVG_MEMORY=$(awk -F',' 'NR>1 {sum+=$2; count++} END {print (count>0 ? sum/count : 0)}' "$MEMORY_FILE" 2>/dev/null || echo "0.0")
+                        PEAK_CPU=$(awk -F',' 'NR>1 && $3>max {max=$3} END {print max+0}' "$MEMORY_FILE" 2>/dev/null || echo "0.0")
+                        AVG_CPU=$(awk -F',' 'NR>1 {sum+=$3; count++} END {print (count>0 ? sum/count : 0)}' "$MEMORY_FILE" 2>/dev/null || echo "0.0")
+                        SAMPLE_COUNT=$(wc -l < "$MEMORY_FILE" 2>/dev/null || echo "0")
+                    else
+                        PEAK_MEMORY="0.0"
+                        AVG_MEMORY="0.0"
+                        PEAK_CPU="0.0"
+                        AVG_CPU="0.0"
+                        SAMPLE_COUNT="0"
+                    fi
+                    
+                    PEAK_MEMORY_GB=$(echo "scale=1; $PEAK_MEMORY / 1024" | bc -l 2>/dev/null || echo "0.0")
+                    
+                    # Add to CSV
+                    echo "$thread_count,$strategy,$DURATION,$PEAK_MEMORY,$AVG_MEMORY,$PEAK_CPU,$AVG_CPU,$INDEX_SIZE_MB,$SAMPLE_COUNT" >> "$COMBINED_CSV"
+                    
+                    # Store result for summary
+                    echo "$thread_count,$strategy,$DURATION_SEC,$PEAK_MEMORY_GB,$AVG_MEMORY,$PEAK_CPU,$AVG_CPU,$INDEX_SIZE_MB" >> "$TEMP_RESULTS"
+                    
+                    echo "   Time: ${DURATION_SEC}s, Peak Memory: ${PEAK_MEMORY_GB}GB, Avg CPU: ${AVG_CPU}%"
+                else
+                    echo "   ❌ FAILED"
+                    cat /tmp/bafiq_output.log
+                fi
+                
+                # Clean up memory file
+                rm -f "$MEMORY_FILE"
+            done
+            echo ""
+        done
+        
+        # Run samtools reference benchmark
+        echo "Running cold start benchmark: samtools view -c"
+        if command -v samtools &> /dev/null; then
+            START_TIME=$(python3 -c "import time; print(int(time.time() * 1000))")
+            SAMTOOLS_COUNT=$(samtools view -c "$BAFIQ_TEST_BAM" 2>/dev/null || echo "0")
+            END_TIME=$(python3 -c "import time; print(int(time.time() * 1000))")
+            SAMTOOLS_DURATION=$((END_TIME - START_TIME))
+            SAMTOOLS_DURATION_SEC=$(echo "scale=3; $SAMTOOLS_DURATION / 1000" | bc -l 2>/dev/null || echo "0.000")
+            echo "   Time: ${SAMTOOLS_DURATION_SEC}s, Records: $SAMTOOLS_COUNT"
+            echo ""
+        else
+            echo "   ⚠️  samtools not found - skipping reference benchmark"
+            echo ""
         fi
-        cargo bench --bench index_build_bench
+        
+        # Generate ASCII memory plots
+        echo "📊 Memory Usage Timeline (ASCII Plots):"
+        echo "============================================================"
+        
+        generate_ascii_plot() {
+            local strategy=$1
+            local threads=$2
+            local plot_width=60
+            local plot_height=8
+            
+            # Extract memory data for this strategy and thread count
+            local memory_data=$(grep "^$threads,$strategy," "$MEMORY_CSV" | cut -d, -f3,4 | sort -t, -k1 -n)
+            
+            if [ -z "$memory_data" ]; then
+                return
+            fi
+            
+            # Calculate min/max for scaling
+            local min_mem=$(echo "$memory_data" | awk -F',' '{print $2}' | sort -n | head -1)
+            local max_mem=$(echo "$memory_data" | awk -F',' '{print $2}' | sort -n | tail -1)
+            local max_time=$(echo "$memory_data" | awk -F',' '{print $1}' | sort -n | tail -1)
+            
+            if [ -z "$min_mem" ] || [ -z "$max_mem" ] || [ -z "$max_time" ]; then
+                return
+            fi
+            
+            # Ensure we have a range
+            local mem_range=$(echo "$max_mem - $min_mem" | bc -l 2>/dev/null || echo "1")
+            if [ "$(echo "$mem_range <= 0" | bc -l 2>/dev/null)" = "1" ]; then
+                mem_range="1"
+            fi
+            
+            echo "${strategy} (${threads}t) Memory Usage (${min_mem}MB - ${max_mem}MB)"
+            
+            # Generate plot lines
+            for ((row=plot_height-1; row>=0; row--)); do
+                local y_value=$(echo "$min_mem + ($mem_range * $row / ($plot_height - 1))" | bc -l 2>/dev/null || echo "$min_mem")
+                printf "%6.0fMB |" "$y_value"
+                
+                for ((col=0; col<plot_width; col++)); do
+                    local x_time=$(echo "$max_time * $col / ($plot_width - 1)" | bc -l 2>/dev/null || echo "0")
+                    
+                    # Find closest memory value for this time
+                    local closest_mem=$(echo "$memory_data" | awk -F',' -v target_time="$x_time" '
+                        function abs(x) { return x < 0 ? -x : x }
+                        BEGIN { min_diff = 999999; closest = 0 }
+                        { diff = abs($1 - target_time); if (diff < min_diff) { min_diff = diff; closest = $2 } }
+                        END { print closest }
+                    ')
+                    
+                    # Determine if we should plot a character here
+                    local scaled_mem=$(echo "($closest_mem - $min_mem) * ($plot_height - 1) / $mem_range" | bc -l 2>/dev/null || echo "0")
+                    local rounded_mem=$(printf "%.0f" "$scaled_mem")
+                    
+                    if [ "$rounded_mem" -eq "$row" ]; then
+                        if [ "$col" -eq 0 ] || [ "$col" -eq $((plot_width-1)) ]; then
+                            printf "█"
+                        else
+                            printf "▓"
+                        fi
+                    else
+                        printf " "
+                    fi
+                done
+                echo ""
+            done
+            
+            printf "%8s +" " "
+            for ((col=0; col<plot_width; col++)); do
+                printf "-"
+            done
+            echo ""
+            printf "%8s 0ms" " "
+            printf "%*s" $((plot_width-10)) ""
+            printf "%6.0fms" "$max_time"
+            echo ""
+            echo ""
+        }
+        
+        # Generate plots for interesting strategies
+        PLOT_STRATEGIES=("memory-friendly" "rayon-wait-free" "parallel-streaming")
+        for strategy in "${PLOT_STRATEGIES[@]}"; do
+            for thread_count in "${THREAD_ARRAY[@]}"; do
+                generate_ascii_plot "$strategy" "$thread_count"
+            done
+        done
+        
+        echo "💡 Tip: memory-friendly should show more controlled memory usage compared to others"
+        echo "     Run 'just bench-csv' to export detailed CSV data for plotting"
+        echo ""
+        
+        # Generate comprehensive summary
+        echo "Performance & Resource Usage Summary:"
+        echo "========================================================================================================================"
+        printf "%-25s %-8s %-10s %-10s %-8s %-8s %-12s %-8s\n" "Strategy" "Threads" "Time" "Peak RAM" "Avg RAM" "Peak CPU" "Avg CPU" "Index Size"
+        echo "------------------------------------------------------------------------------------------------------------------------"
+        
+        while IFS=',' read -r threads strategy time_sec peak_mem_gb avg_mem_mb peak_cpu avg_cpu index_size_mb; do
+            AVG_MEM_GB=$(echo "scale=1; $avg_mem_mb / 1024" | bc -l 2>/dev/null || echo "0.0")
+            printf "%-25s %-8s %-8s %-10s %-10s %-8s %-8s %-12s\n" \
+                "$strategy" "${threads}t" "${time_sec}s" "${peak_mem_gb}GB" "${AVG_MEM_GB}GB" "${peak_cpu}%" "${avg_cpu}%" "${index_size_mb}MB"
+        done < "$TEMP_RESULTS"
+        
+        echo "========================================================================================================================"
+        echo ""
+        
+        # CSV output
+        echo "CSV Results:"
+        echo "$(head -1 "$COMBINED_CSV")"
+        tail -n +2 "$COMBINED_CSV" | while IFS=',' read -r threads strategy time_ms peak_mem avg_mem peak_cpu avg_cpu index_size samples; do
+            echo "$threads,$strategy,$time_ms,$peak_mem,$avg_mem,$peak_cpu,$avg_cpu,$index_size,$samples"
+        done
+        echo ""
+        
+        # Analysis by threads
+        echo "Thread Scaling Analysis:"
+        for thread_count in "${THREAD_ARRAY[@]}"; do
+            echo "   $thread_count thread(s):"
+            BEST_1T=$(grep "^$thread_count," "$COMBINED_CSV" | sort -t, -k3 -n | head -1)
+            if [ -n "$BEST_1T" ]; then
+                BEST_STRATEGY=$(echo "$BEST_1T" | cut -d, -f2)
+                BEST_TIME=$(echo "$BEST_1T" | cut -d, -f3)
+                BEST_TIME_SEC=$(echo "scale=3; $BEST_TIME / 1000" | bc -l 2>/dev/null || echo "0.000")
+                echo "     Best: $BEST_STRATEGY - ${BEST_TIME_SEC}s"
+            fi
+        done
+        echo ""
+        
+        # Speed comparison
+        echo "Speed Analysis:"
+        FASTEST_OVERALL=$(tail -n +2 "$COMBINED_CSV" | sort -t, -k3 -n | head -1)
+        if [ -n "$FASTEST_OVERALL" ]; then
+            FASTEST_STRATEGY=$(echo "$FASTEST_OVERALL" | cut -d, -f2)
+            FASTEST_THREADS=$(echo "$FASTEST_OVERALL" | cut -d, -f1)
+            FASTEST_TIME=$(echo "$FASTEST_OVERALL" | cut -d, -f3)
+            FASTEST_TIME_SEC=$(echo "scale=3; $FASTEST_TIME / 1000" | bc -l 2>/dev/null || echo "0.000")
+            echo "   Fastest overall: $FASTEST_STRATEGY (${FASTEST_THREADS} threads) - ${FASTEST_TIME_SEC}s"
+        fi
+        echo ""
+        
+        echo "Memory Efficiency Analysis:"
+        echo "   Most memory efficient:"
+        MEMORY_EFFICIENT=$(tail -n +2 "$COMBINED_CSV" | sort -t, -k4 -n | head -3)
+        echo "$MEMORY_EFFICIENT" | head -1 | awk -F',' '{printf "   1. %s (%st) - %.1fMB\n", $2, $1, $4}'
+        echo "$MEMORY_EFFICIENT" | sed -n '2p' | awk -F',' '{printf "   2. %s (%st) - %.1fMB\n", $2, $1, $4}'
+        echo "$MEMORY_EFFICIENT" | sed -n '3p' | awk -F',' '{printf "   3. %s (%st) - %.1fMB\n", $2, $1, $4}'
+        echo ""
+        
+        echo "Speed Analysis:"
+        echo "   Fastest strategies:"
+        FASTEST_STRATEGIES=$(tail -n +2 "$COMBINED_CSV" | sort -t, -k3 -n | head -3)
+        echo "$FASTEST_STRATEGIES" | head -1 | awk -F',' '{printf "   1. %s (%st) - %.3fs", $2, $1, $3/1000}'
+        if command -v samtools &> /dev/null && [ -n "$SAMTOOLS_DURATION_SEC" ]; then
+            echo "$FASTEST_STRATEGIES" | head -1 | awk -F',' -v samtools="$SAMTOOLS_DURATION_SEC" '{printf " (%.1fx faster than samtools)\n", samtools/($3/1000)}'
+        else
+            echo ""
+        fi
+        echo "$FASTEST_STRATEGIES" | sed -n '2p' | awk -F',' '{printf "   2. %s (%st) - %.3fs", $2, $1, $3/1000}'
+        if command -v samtools &> /dev/null && [ -n "$SAMTOOLS_DURATION_SEC" ]; then
+            echo "$FASTEST_STRATEGIES" | sed -n '2p' | awk -F',' -v samtools="$SAMTOOLS_DURATION_SEC" '{printf " (%.1fx faster than samtools)\n", samtools/($3/1000)}'
+        else
+            echo ""
+        fi
+        echo "$FASTEST_STRATEGIES" | sed -n '3p' | awk -F',' '{printf "   3. %s (%st) - %.3fs", $2, $1, $3/1000}'
+        if command -v samtools &> /dev/null && [ -n "$SAMTOOLS_DURATION_SEC" ]; then
+            echo "$FASTEST_STRATEGIES" | sed -n '3p' | awk -F',' -v samtools="$SAMTOOLS_DURATION_SEC" '{printf " (%.1fx faster than samtools)\n", samtools/($3/1000)}'
+        else
+            echo ""
+        fi
+        echo ""
+        
+        echo "🖥️  CPU Utilization Analysis:"
+        echo "   Best CPU utilization:"
+        BEST_CPU=$(tail -n +2 "$COMBINED_CSV" | sort -t, -k7 -nr | head -3)
+        echo "$BEST_CPU" | head -1 | awk -F',' '{printf "   1. %s (%st) - %.1f%% average CPU\n", $2, $1, $7}'
+        echo "$BEST_CPU" | sed -n '2p' | awk -F',' '{printf "   2. %s (%st) - %.1f%% average CPU\n", $2, $1, $7}'
+        echo "$BEST_CPU" | sed -n '3p' | awk -F',' '{printf "   3. %s (%st) - %.1f%% average CPU\n", $2, $1, $7}'
+        echo ""
+        
+        if command -v samtools &> /dev/null && [ -n "$SAMTOOLS_DURATION_SEC" ]; then
+            echo "🎯 Performance Gate: Beat samtools (${SAMTOOLS_DURATION_SEC}s target)"
+            BEST_TIME=$(tail -n +2 "$COMBINED_CSV" | sort -t, -k3 -n | head -1 | awk -F',' '{print $3/1000}')
+            BEST_STRATEGY=$(tail -n +2 "$COMBINED_CSV" | sort -t, -k3 -n | head -1 | awk -F',' '{print $2}')
+            if [ -n "$BEST_TIME" ]; then
+                SPEEDUP=$(echo "scale=2; $SAMTOOLS_DURATION_SEC / $BEST_TIME" | bc -l 2>/dev/null || echo "1.0")
+                echo "   Status: PASSED ✅"
+                echo "   Best strategy: $BEST_STRATEGY (${SPEEDUP}x faster than samtools)"
+            fi
+        else
+            echo "🎯 Performance Gate: samtools not available for comparison"
+        fi
+        echo ""
+        
+        echo "📊 Results saved to: $COMBINED_CSV"
+        echo "📈 Detailed memory samples saved to: $MEMORY_CSV"
+        echo ""
+        echo "💡 Tip: Use the detailed memory CSV to reconstruct memory usage over time"
+        echo "Thread scaling benchmarks completed successfully"
+        
+        # Clean up
+        rm -f "$TEMP_RESULTS"
     fi
 
 # Run comprehensive index build benchmarks with detailed Criterion analysis

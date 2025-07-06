@@ -611,6 +611,28 @@ fn simple_benchmarks() -> Result<()> {
     println!("     Run 'just bench-csv' to export detailed CSV data for plotting");
     println!();
 
+    // CSV Results output for thread scaling analysis
+    println!("CSV Results:");
+    println!("Strategy,Time (ms),Peak Memory (MB),Avg Memory (MB),Peak CPU (%),Avg CPU (%),Index Size (MB),Samples");
+
+    for (name, result) in &results {
+        let index_size = calculate_index_size(&result.index)?;
+        let index_size_mb = index_size as f64 / (1024.0 * 1024.0);
+
+        println!(
+            "{},{:.1},{:.1},{:.1},{:.1},{:.1},{:.1},{}",
+            name,
+            result.duration.as_millis() as f64,
+            result.resources.peak_memory_bytes as f64 / (1024.0 * 1024.0),
+            result.resources.avg_memory_bytes as f64 / (1024.0 * 1024.0),
+            result.resources.peak_cpu_percent,
+            result.resources.avg_cpu_percent,
+            index_size_mb,
+            result.resources.sample_count
+        );
+    }
+    println!();
+
     // Memory efficiency analysis
     println!("\nMemory Efficiency Analysis:");
     let mut memory_efficiency: Vec<_> = results
