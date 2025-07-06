@@ -2,6 +2,7 @@ use crate::FlagIndex;
 use anyhow::Result;
 
 // Re-export all strategy implementations
+pub mod adaptive_memory_mapped;
 pub mod memory_friendly;
 pub mod parallel_streaming;
 pub mod rayon_wait_free;
