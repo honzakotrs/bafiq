@@ -20,7 +20,7 @@ use crate::index::strategies::shared::{
     count_flags_in_block_optimized, extract_flags_from_decompressed_simd_optimized,
 };
 use crate::index::strategies::{
-    parallel_streaming::ParallelStreamingStrategy,
+    memory_friendly::MemoryFriendlyStrategy, parallel_streaming::ParallelStreamingStrategy,
     rayon_streaming_optimized::RayonStreamingOptimizedStrategy,
     rayon_wait_free::RayonWaitFreeStrategy, sequential::SequentialStrategy,
     zero_merge::ZeroMergeStrategy, IndexingStrategy,
@@ -54,6 +54,8 @@ pub enum BuildStrategy {
     RayonWaitFree,
     /// Zero-merge processing - eliminates O(n²) merge bottleneck for large files 🚀 SCALES
     ZeroMerge,
+    /// Memory-friendly processing - constant RAM footprint for any file size 💾 EFFICIENT
+    MemoryFriendly,
 }
 
 impl BuildStrategy {
@@ -65,6 +67,7 @@ impl BuildStrategy {
             BuildStrategy::RayonStreamingOptimized => "rayon_streaming_optimized",
             BuildStrategy::RayonWaitFree => "rayon_wait_free",
             BuildStrategy::ZeroMerge => "zero_merge",
+            BuildStrategy::MemoryFriendly => "memory_friendly",
         }
     }
 
@@ -75,6 +78,7 @@ impl BuildStrategy {
             BuildStrategy::RayonStreamingOptimized,
             BuildStrategy::RayonWaitFree,
             BuildStrategy::ZeroMerge,
+            BuildStrategy::MemoryFriendly,
             BuildStrategy::Sequential, // Last because it's often muted
         ]
     }
@@ -138,6 +142,7 @@ impl IndexBuilder {
             }
             BuildStrategy::RayonWaitFree => RayonWaitFreeStrategy.build(path_str),
             BuildStrategy::ZeroMerge => ZeroMergeStrategy.build(path_str),
+            BuildStrategy::MemoryFriendly => MemoryFriendlyStrategy.build(path_str),
         }
     }
 

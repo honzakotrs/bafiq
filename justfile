@@ -146,6 +146,63 @@ bench-view:
         echo "   (Directory preserved for manual inspection)"
     fi
 
+# Export CSV timelines for memory usage analysis
+bench-csv:
+    #!/usr/bin/env bash
+    if [ -z "${BAFIQ_TEST_BAM:-}" ]; then
+        echo "Set BAFIQ_TEST_BAM environment variable to run CSV export benchmarks"
+        echo "   Example: export BAFIQ_TEST_BAM=/path/to/test.bam"
+        echo "   Then run: just bench-csv"
+    else
+        echo "Running benchmarks with CSV timeline export..."
+        echo "   BAM file: $BAFIQ_TEST_BAM"
+        echo "   Output: ./memory_timelines/ directory"
+        echo ""
+        
+        # Create CSV export directory
+        mkdir -p ./memory_timelines
+        
+        # Run benchmarks with CSV export
+        BAFIQ_EXPORT_CSV=./memory_timelines cargo bench --bench index_build_bench
+        
+        echo ""
+        echo "📊 CSV files exported to ./memory_timelines/"
+        echo "   You can now analyze memory usage patterns:"
+        echo ""
+        echo "   # Compare memory_friendly vs others"
+        echo "   python3 -c \""
+        echo "import pandas as pd"
+        echo "import matplotlib.pyplot as plt"
+        echo "import glob"
+        echo ""
+        echo "# Load all CSV files"
+        echo "for csv_file in glob.glob('./memory_timelines/*_timeline.csv'):"
+        echo "    df = pd.read_csv(csv_file)"
+        echo "    strategy = df['strategy'].iloc[0]"
+        echo "    plt.plot(df['time_ms'], df['memory_mb'], label=strategy)"
+        echo ""
+        echo "plt.xlabel('Time (ms)')"
+        echo "plt.ylabel('Memory (MB)')"
+        echo "plt.title('Memory Usage Timeline - All Strategies')"
+        echo "plt.legend()"
+        echo "plt.grid(True)"
+        echo "plt.show()"
+        echo "\""
+        echo ""
+        echo "   # Focus on memory_friendly alone"
+        echo "   python3 -c \""
+        echo "import pandas as pd"
+        echo "import matplotlib.pyplot as plt"
+        echo "df = pd.read_csv('./memory_timelines/memory_friendly_timeline.csv')"
+        echo "plt.plot(df['time_ms'], df['memory_mb'])"
+        echo "plt.xlabel('Time (ms)')"
+        echo "plt.ylabel('Memory (MB)')"
+        echo "plt.title('Memory Usage: memory_friendly Strategy')"
+        echo "plt.grid(True)"
+        echo "plt.show()"
+        echo "\""
+    fi
+
 # Show available commands
 help:
     @just --list 

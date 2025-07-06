@@ -175,6 +175,10 @@ fn benchmark_cold_start<F>(
                         / all_resources.len() as f32,
                     execution_time: total_time / iters as u32,
                     sample_count: all_resources.iter().map(|r| r.sample_count).sum(),
+                    timeline_samples: all_resources
+                        .first()
+                        .map(|r| r.timeline_samples.clone())
+                        .unwrap_or_default(),
                 };
 
                 // Store resource data globally for later reporting
@@ -527,6 +531,22 @@ fn simple_benchmarks() -> Result<()> {
     // Run samtools benchmark
     let samtools_result = run_simple_samtools_benchmark(&test_bam)?;
 
+    // Export CSV timelines if requested
+    if let Ok(csv_dir) = env::var("BAFIQ_EXPORT_CSV") {
+        println!("\n📊 Exporting timeline CSV files to: {}", csv_dir);
+        std::fs::create_dir_all(&csv_dir)?;
+
+        for (name, result) in &results {
+            let csv_path = format!("{}/{}_timeline.csv", csv_dir, name);
+            if let Err(e) = result.resources.export_timeline_csv(name, &csv_path) {
+                eprintln!("Warning: Failed to export CSV for {}: {}", name, e);
+            }
+        }
+
+        println!("CSV export complete! You can now plot memory usage patterns:");
+        println!("   python -c \"import pandas as pd; import matplotlib.pyplot as plt; df = pd.read_csv('{}/memory_friendly_timeline.csv'); plt.plot(df['time_ms'], df['memory_mb']); plt.xlabel('Time (ms)'); plt.ylabel('Memory (MB)'); plt.title('Memory Usage Timeline'); plt.show()\"", csv_dir);
+    }
+
     // Performance and Resource Usage Summary Table
     println!("\nPerformance & Resource Usage Summary:");
     println!("{}", "=".repeat(120));
@@ -571,6 +591,25 @@ fn simple_benchmarks() -> Result<()> {
     );
 
     println!("{}", "=".repeat(120));
+
+    // ASCII Memory Usage Plots
+    println!("\n📊 Memory Usage Timeline (ASCII Plots):");
+    println!("{}", "=".repeat(60));
+
+    // Show memory plots for key strategies (limit to avoid overwhelming output)
+    let plot_strategies = ["memory_friendly", "rayon_wait_free", "parallel_streaming"];
+
+    for strategy_name in &plot_strategies {
+        if let Some((_, result)) = results.iter().find(|(name, _)| name == strategy_name) {
+            let plot = result.resources.generate_memory_plot(strategy_name, 60, 8);
+            println!("{}", plot);
+        }
+    }
+
+    // Show comparison hint
+    println!("💡 Tip: memory_friendly should show more controlled memory usage compared to others");
+    println!("     Run 'just bench-csv' to export detailed CSV data for plotting");
+    println!();
 
     // Memory efficiency analysis
     println!("\nMemory Efficiency Analysis:");
@@ -698,6 +737,8 @@ pub struct ResourceStats {
     execution_time: Duration,
     /// Number of samples taken
     sample_count: usize,
+    /// Raw timeline samples (time_ms, memory_bytes, cpu_percent)
+    timeline_samples: Vec<(u64, u64, f32)>,
 }
 
 impl ResourceStats {
@@ -709,6 +750,7 @@ impl ResourceStats {
             avg_cpu_percent: 0.0,
             execution_time: Duration::new(0, 0),
             sample_count: 0,
+            timeline_samples: Vec::new(),
         }
     }
 
@@ -726,6 +768,112 @@ impl ResourceStats {
         } else {
             format!("{}B", bytes)
         }
+    }
+
+    /// Export timeline samples as CSV
+    pub fn export_timeline_csv(&self, strategy_name: &str, output_path: &str) -> Result<()> {
+        use std::fs::File;
+        use std::io::Write;
+
+        let mut file = File::create(output_path)?;
+
+        // Write CSV header
+        writeln!(file, "strategy,time_ms,memory_bytes,memory_mb,cpu_percent")?;
+
+        // Write timeline samples
+        for (time_ms, memory_bytes, cpu_percent) in &self.timeline_samples {
+            let memory_mb = *memory_bytes as f64 / (1024.0 * 1024.0);
+            writeln!(
+                file,
+                "{},{},{},{:.2},{:.2}",
+                strategy_name, time_ms, memory_bytes, memory_mb, cpu_percent
+            )?;
+        }
+
+        println!(
+            "📊 Exported timeline CSV: {} ({} samples)",
+            output_path,
+            self.timeline_samples.len()
+        );
+        Ok(())
+    }
+
+    /// Generate ASCII plot of memory usage over time
+    pub fn generate_memory_plot(&self, strategy_name: &str, width: usize, height: usize) -> String {
+        if self.timeline_samples.is_empty() {
+            return format!("No timeline data for {}", strategy_name);
+        }
+
+        let mut plot = String::new();
+
+        // Convert bytes to MB for better readability
+        let memory_samples: Vec<f64> = self
+            .timeline_samples
+            .iter()
+            .map(|(_, memory_bytes, _)| *memory_bytes as f64 / (1024.0 * 1024.0))
+            .collect();
+
+        if memory_samples.is_empty() {
+            return format!("No memory samples for {}", strategy_name);
+        }
+
+        let min_memory = memory_samples.iter().fold(f64::INFINITY, |a, &b| a.min(b));
+        let max_memory = memory_samples
+            .iter()
+            .fold(f64::NEG_INFINITY, |a, &b| a.max(b));
+        let memory_range = (max_memory - min_memory).max(1.0); // Avoid division by zero
+
+        // Create plot header
+        plot.push_str(&format!(
+            "{} Memory Usage ({:.0}MB - {:.0}MB)\n",
+            strategy_name, min_memory, max_memory
+        ));
+
+        // Create Y-axis labels and plot area
+        for y in (0..height).rev() {
+            let memory_level = min_memory + (y as f64 / (height - 1) as f64) * memory_range;
+            plot.push_str(&format!("{:5.0}MB |", memory_level));
+
+            // Plot data points for this Y level
+            for x in 0..width {
+                let sample_idx = (x * memory_samples.len()) / width;
+                if sample_idx < memory_samples.len() {
+                    let sample_memory = memory_samples[sample_idx];
+                    let normalized_y = ((sample_memory - min_memory) / memory_range
+                        * (height - 1) as f64) as usize;
+
+                    if normalized_y == y {
+                        plot.push('█');
+                    } else if normalized_y.abs_diff(y) <= 1 {
+                        plot.push('▓');
+                    } else {
+                        plot.push(' ');
+                    }
+                } else {
+                    plot.push(' ');
+                }
+            }
+            plot.push('\n');
+        }
+
+        // Add X-axis
+        plot.push_str("       +");
+        plot.push_str(&"-".repeat(width));
+        plot.push('\n');
+
+        // Add time labels
+        if let Some((start_time, _, _)) = self.timeline_samples.first() {
+            if let Some((end_time, _, _)) = self.timeline_samples.last() {
+                let duration_ms = end_time - start_time;
+                plot.push_str(&format!(
+                    "       0ms{:>width$}ms\n",
+                    duration_ms,
+                    width = width.saturating_sub(3)
+                ));
+            }
+        }
+
+        plot
     }
 }
 
@@ -768,6 +916,7 @@ impl ResourceMonitor {
         thread::spawn(move || {
             let mut memory_samples = Vec::new();
             let mut cpu_samples = Vec::new();
+            let mut timeline_samples = Vec::new();
             let start_time = Instant::now();
 
             while {
@@ -781,9 +930,11 @@ impl ResourceMonitor {
                     if let Some(process) = system.process(pid) {
                         let memory = process.memory();
                         let cpu = process.cpu_usage();
+                        let time_ms = start_time.elapsed().as_millis() as u64;
 
                         memory_samples.push(memory);
                         cpu_samples.push(cpu);
+                        timeline_samples.push((time_ms, memory, cpu));
 
                         // Update running stats
                         let mut stats = stats_clone.lock().unwrap();
@@ -813,6 +964,7 @@ impl ResourceMonitor {
             final_stats.avg_memory_bytes = avg_memory;
             final_stats.avg_cpu_percent = avg_cpu;
             final_stats.execution_time = execution_time;
+            final_stats.timeline_samples = timeline_samples;
         });
 
         Ok(())

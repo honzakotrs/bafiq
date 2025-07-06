@@ -24,6 +24,9 @@ pub enum CliStrategy {
     /// Zero-merge processing - eliminates O(n²) merge bottleneck for large files
     #[value(name = "zero-merge")]
     ZeroMerge,
+    /// Memory-friendly processing - constant RAM footprint for any file size
+    #[value(name = "memory-friendly")]
+    MemoryFriendly,
 }
 
 impl From<CliStrategy> for BuildStrategy {
@@ -34,6 +37,7 @@ impl From<CliStrategy> for BuildStrategy {
             CliStrategy::RayonStreamingOptimized => BuildStrategy::RayonStreamingOptimized,
             CliStrategy::RayonWaitFree => BuildStrategy::RayonWaitFree,
             CliStrategy::ZeroMerge => BuildStrategy::ZeroMerge,
+            CliStrategy::MemoryFriendly => BuildStrategy::MemoryFriendly,
         }
     }
 }
