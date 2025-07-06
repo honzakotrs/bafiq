@@ -481,6 +481,7 @@ bench-view:
         echo "   BAM file: $BAFIQ_TEST_BAM"
         echo "   Query: unmapped reads (-f 0x4 / -f 4 / --unmapped)"
         echo "   Thread count: $THREADS (both tools use explicit --threads/-@)"
+        echo "   Strategy: $STRATEGY (override with BENCH_STRATEGY=strategy-name)"
         echo ""
         
         # Build bafiq first
@@ -499,8 +500,12 @@ bench-view:
             exit 1
         fi
         
+        # Allow strategy specification (default: rayon-wait-free for best performance)
+        STRATEGY="${BENCH_STRATEGY:-rayon-wait-free}"
+        
         echo "🔧 Building index if needed..."
-        time ./target/release/bafiq --threads "$THREADS" index "$BAFIQ_TEST_BAM" --strategy rayon-wait-free
+        echo "   Strategy: $STRATEGY"
+        time ./target/release/bafiq --threads "$THREADS" index "$BAFIQ_TEST_BAM" --strategy "$STRATEGY"
         
         echo ""
         echo "🏁 BENCHMARK: View unmapped reads"
