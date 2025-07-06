@@ -385,6 +385,7 @@ fn main() -> Result<()> {
             mt_decomp,
             simple_parallel,
             thread_pool,
+            cli.threads,
         ),
         Commands::LoadIndex {
             input,
@@ -690,6 +691,7 @@ fn cmd_fast_count(
     mt_decomp: bool,
     simple_parallel: bool,
     thread_pool: bool,
+    threads: Option<usize>,
 ) -> Result<()> {
     let input_str = input.to_str().ok_or_else(|| anyhow!("Invalid file path"))?;
 
@@ -734,9 +736,14 @@ fn cmd_fast_count(
     } else {
         let builder = IndexBuilder::new();
         if dual_direction {
-            builder.scan_count_dual_direction(input_str, required_flags, forbidden_flags)?
+            builder.scan_count_dual_direction(
+                input_str,
+                required_flags,
+                forbidden_flags,
+                threads,
+            )?
         } else {
-            builder.scan_count(input_str, required_flags, forbidden_flags)?
+            builder.scan_count(input_str, required_flags, forbidden_flags, threads)?
         }
     };
     let scan_time = start.elapsed();

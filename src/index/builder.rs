@@ -152,13 +152,14 @@ impl IndexBuilder {
         bam_path: &str,
         required_flags: u16,
         forbidden_flags: u16,
+        thread_count: Option<usize>,
     ) -> Result<u64> {
         let file = File::open(bam_path)?;
         let mmap = unsafe { Mmap::map(&file)? };
         let data = Arc::new(mmap);
 
-        // Use more workers than CPU cores for I/O bound workload
-        let num_threads = (rayon::current_num_threads() * 2).max(8);
+        // Use specified thread count or default to more workers than CPU cores for I/O bound workload
+        let num_threads = thread_count.unwrap_or_else(|| (rayon::current_num_threads() * 2).max(8));
 
         // PERFORMANCE FIX: Use unbounded crossbeam channel for scan_count too!
         let (sender, receiver) = unbounded::<(usize, usize)>(); // (start_pos, total_size)
@@ -275,14 +276,15 @@ impl IndexBuilder {
         bam_path: &str,
         required_flags: u16,
         forbidden_flags: u16,
+        thread_count: Option<usize>,
     ) -> Result<u64> {
         let file = File::open(bam_path)?;
         let mmap = unsafe { Mmap::map(&file)? };
         let data = Arc::new(mmap);
         let file_size = data.len();
 
-        // Use more workers for I/O bound workload
-        let num_threads = (rayon::current_num_threads() * 2).max(8);
+        // Use specified thread count or default to more workers for I/O bound workload
+        let num_threads = thread_count.unwrap_or_else(|| (rayon::current_num_threads() * 2).max(8));
 
         // PERFORMANCE FIX: Use unbounded crossbeam channel for dual-direction scan too!
         let (sender, receiver) = unbounded::<(usize, usize)>(); // (start_pos, total_size)
