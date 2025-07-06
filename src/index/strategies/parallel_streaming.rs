@@ -10,9 +10,9 @@ use super::shared::extract_flags_from_block_pooled;
 use super::{IndexingStrategy, BGZF_BLOCK_MAX_SIZE, BGZF_FOOTER_SIZE, BGZF_HEADER_SIZE};
 use crate::FlagIndex;
 
-pub struct ParallelStreamingStrategy;
+pub struct ChannelProducerConsumerStrategy;
 
-impl IndexingStrategy for ParallelStreamingStrategy {
+impl IndexingStrategy for ChannelProducerConsumerStrategy {
     fn build(&self, bam_path: &str) -> Result<FlagIndex> {
         let file = File::open(bam_path)?;
         let mmap = unsafe { Mmap::map(&file)? };

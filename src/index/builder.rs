@@ -14,15 +14,15 @@ use std::thread as std_thread;
 use crate::index::strategies::shared::count_flags_in_block_optimized;
 use crate::index::strategies::{
     adaptive_memory_mapped::AdaptiveMemoryMappedStrategy, constant_memory::ConstantMemoryStrategy,
-    parallel_streaming::ParallelStreamingStrategy, rayon_wait_free::RayonWaitFreeStrategy,
+    parallel_streaming::ChannelProducerConsumerStrategy, rayon_wait_free::RayonWaitFreeStrategy,
     IndexingStrategy,
 };
 
 /// Available index building strategies
 #[derive(Debug, Clone, Copy)]
 pub enum BuildStrategy {
-    /// Streaming parallel processing - crossbeam channels producer-consumer (2.127s)
-    ParallelStreaming,
+    /// Channel-based producer-consumer - crossbeam channels architecture (2.127s) 📡 CHANNELS
+    ChannelProducerConsumer,
     /// Wait-free processing - fastest performing approach (1.427s) 🏆 FASTEST
     RayonWaitFree,
     /// constant-memory processing - constant RAM footprint for any file size 💾 EFFICIENT
@@ -40,7 +40,7 @@ impl BuildStrategy {
     /// Get the canonical name for this strategy (used in benchmarks and CLI)
     pub fn name(&self) -> &'static str {
         match self {
-            BuildStrategy::ParallelStreaming => "parallel_streaming",
+            BuildStrategy::ChannelProducerConsumer => "channel_producer_consumer",
             BuildStrategy::RayonWaitFree => "rayon_wait_free",
             BuildStrategy::ConstantMemory => "memory_friendly",
             BuildStrategy::AdaptiveMemoryMapped => "adaptive_memory_mapped",
@@ -50,7 +50,7 @@ impl BuildStrategy {
     /// Get all available strategies for benchmarking
     pub fn all_strategies() -> Vec<BuildStrategy> {
         vec![
-            BuildStrategy::ParallelStreaming,
+            BuildStrategy::ChannelProducerConsumer,
             BuildStrategy::RayonWaitFree,
             BuildStrategy::ConstantMemory,
             BuildStrategy::AdaptiveMemoryMapped,
@@ -90,7 +90,9 @@ impl IndexBuilder {
             .ok_or_else(|| anyhow!("Invalid file path"))?;
 
         match self.strategy {
-            BuildStrategy::ParallelStreaming => ParallelStreamingStrategy.build(path_str),
+            BuildStrategy::ChannelProducerConsumer => {
+                ChannelProducerConsumerStrategy.build(path_str)
+            }
             BuildStrategy::RayonWaitFree => RayonWaitFreeStrategy.build(path_str),
             BuildStrategy::ConstantMemory => ConstantMemoryStrategy.build(path_str),
             BuildStrategy::AdaptiveMemoryMapped => AdaptiveMemoryMappedStrategy.build(path_str),
