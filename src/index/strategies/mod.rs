@@ -1,13 +1,11 @@
 use crate::FlagIndex;
 use anyhow::Result;
 
-// Re-export remaining strategy implementations
-
+// Re-export all strategy implementations
 pub mod memory_friendly;
 pub mod parallel_streaming;
 pub mod rayon_streaming_optimized;
 pub mod rayon_wait_free;
-pub mod sequential;
 pub mod shared;
 
 // Common types used across strategies

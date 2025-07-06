@@ -1,52 +1,28 @@
-use crate::bgzf::{BGZF_BLOCK_MAX_SIZE, BGZF_FOOTER_SIZE, BGZF_HEADER_SIZE};
+use crate::bgzf::{BGZF_FOOTER_SIZE, BGZF_HEADER_SIZE};
 use crate::FlagIndex;
 use anyhow::{anyhow, Result};
 use crossbeam::channel::unbounded;
-use crossbeam::thread;
-use libdeflater::Decompressor;
 use memmap2::Mmap;
-use rayon::prelude::*;
 use std::fs::File;
 
 use std::path::Path;
 
-use std::sync::atomic::AtomicBool;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::thread as std_thread;
 
 // Import strategies
-use crate::index::strategies::shared::{
-    count_flags_in_block_optimized, extract_flags_from_decompressed_simd_optimized,
-};
+use crate::index::strategies::shared::count_flags_in_block_optimized;
 use crate::index::strategies::{
     memory_friendly::MemoryFriendlyStrategy, parallel_streaming::ParallelStreamingStrategy,
     rayon_streaming_optimized::RayonStreamingOptimizedStrategy,
-    rayon_wait_free::RayonWaitFreeStrategy, sequential::SequentialStrategy, IndexingStrategy,
+    rayon_wait_free::RayonWaitFreeStrategy, IndexingStrategy,
 };
-
-/// Information about a BGZF block's location in the file
-#[derive(Debug, Clone)]
-struct BlockInfo {
-    start_pos: usize,
-    total_size: usize,
-}
-
-/// Decompressed BGZF block data for pipeline processing
-#[derive(Debug)]
-struct DecompressedBlock {
-    data: Vec<u8>,
-    block_offset: i64,
-}
 
 /// Available index building strategies
 #[derive(Debug, Clone, Copy)]
 pub enum BuildStrategy {
     /// Streaming parallel processing - simplest high-performance producer-consumer (3.433s)
     ParallelStreaming,
-    /// Sequential processing - single-threaded baseline for measuring parallel benefits
-    Sequential,
-
     /// Streaming evolution with work-stealing - hybrid producer-consumer + work-stealing (3.609s)
     RayonStreamingOptimized,
     /// Wait-free processing - fastest performing approach (3.409s) 🏆 FASTEST
@@ -55,12 +31,16 @@ pub enum BuildStrategy {
     MemoryFriendly,
 }
 
+/// Primary interface for building flag indexes with different strategies
+pub struct IndexBuilder {
+    strategy: BuildStrategy,
+}
+
 impl BuildStrategy {
     /// Get the canonical name for this strategy (used in benchmarks and CLI)
     pub fn name(&self) -> &'static str {
         match self {
             BuildStrategy::ParallelStreaming => "parallel_streaming",
-            BuildStrategy::Sequential => "sequential",
             BuildStrategy::RayonStreamingOptimized => "rayon_streaming_optimized",
             BuildStrategy::RayonWaitFree => "rayon_wait_free",
             BuildStrategy::MemoryFriendly => "memory_friendly",
@@ -74,39 +54,19 @@ impl BuildStrategy {
             BuildStrategy::RayonStreamingOptimized,
             BuildStrategy::RayonWaitFree,
             BuildStrategy::MemoryFriendly,
-            BuildStrategy::Sequential, // Last because it's often muted
         ]
     }
 
     /// Get strategies suitable for routine benchmarking (excludes slow ones)
     pub fn benchmark_strategies() -> Vec<BuildStrategy> {
-        if std::env::var("BAFIQ_BENCH_SEQUENTIAL").is_ok() {
-            Self::all_strategies()
-        } else {
-            // Exclude sequential for routine benchmarking - too slow
-            Self::all_strategies()
-                .into_iter()
-                .filter(|s| !matches!(s, BuildStrategy::Sequential))
-                .collect()
-        }
+        Self::all_strategies().into_iter().collect()
     }
 }
 
 impl Default for BuildStrategy {
     fn default() -> Self {
-        // PERFORMANCE PROVEN: RayonWaitFree achieved best performance at 3.409s
-        // - Fastest of all 11 strategies tested on Linux x86
-        // - Simple discover-all-first + pure rayon work-stealing approach
-        // - Beats complex "optimized" strategies by 97-536ms
-        // - Eliminates thread coordination overhead completely
-        // - 168% CPU utilization with excellent efficiency
         BuildStrategy::RayonWaitFree
     }
-}
-
-/// Primary interface for building flag indexes with different strategies
-pub struct IndexBuilder {
-    strategy: BuildStrategy,
 }
 
 impl IndexBuilder {
@@ -131,7 +91,6 @@ impl IndexBuilder {
 
         match self.strategy {
             BuildStrategy::ParallelStreaming => ParallelStreamingStrategy.build(path_str),
-            BuildStrategy::Sequential => SequentialStrategy.build(path_str),
             BuildStrategy::RayonStreamingOptimized => {
                 RayonStreamingOptimizedStrategy.build(path_str)
             }

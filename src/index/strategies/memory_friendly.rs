@@ -54,7 +54,6 @@ impl IndexingStrategy for MemoryFriendlyStrategy {
         // **MEMORY BUDGET CONFIGURATION**
         const MEMORY_BUDGET_MB: usize = 256;           // Total memory budget  
         const CHUNK_SIZE_MB: usize = 1024;             // 1GB chunks for processing
-        const MAX_CHUNK_INDEX_MB: usize = 32;          // Expected size per chunk index
         
         let file = File::open(bam_path)?;
         let mmap = unsafe { Mmap::map(&file)? };
