@@ -72,6 +72,11 @@ cargo bench
 
 The performance gate requires the low-level approach to be at least 20% faster than rust-htslib while maintaining 100% correctness.
 
+## Data for benchmarking
+
+- WGS 30x, short-reads: https://ftp.ncbi.nlm.nih.gov/ReferenceSamples/giab/data/NA12878/NIST_NA12878_HG001_HiSeq_300x/
+- 
+
 ## Version history
 
 ### 0.0.5
