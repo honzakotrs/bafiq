@@ -33,6 +33,7 @@ bench:
         echo "   Thread counts to test: $THREADS"
         echo "   Fast development mode with resource monitoring"
         echo "   💡 Override threads: BENCH_THREADS=\"1,2,4,8,$MAX_CORES\" just bench"
+        echo "   💡 Show memory plots: MEM_PLOTS=1 just bench"
         echo "   💡 Both bafiq and samtools use explicit --threads/-@ for fair comparison"
         
         # Get original BAM size
@@ -239,9 +240,10 @@ bench:
         
 
         
-        # Generate ASCII memory plots
-        echo "📊 Memory Usage Timeline (ASCII Plots):"
-        echo "============================================================"
+        # Generate ASCII memory plots (optional, enable with MEM_PLOTS=1)
+        if [ "${MEM_PLOTS:-0}" = "1" ]; then
+            echo "📊 Memory Usage Timeline (ASCII Plots):"
+            echo "============================================================"
         
         generate_ascii_plot() {
             local strategy=$1
@@ -326,9 +328,12 @@ bench:
             done
         done
         
-        echo "💡 Tip: memory-friendly should show more controlled memory usage compared to others"
-        echo "     Run 'just bench-csv' to export detailed CSV data for plotting"
-        echo ""
+            echo "💡 Tip: memory-friendly should show more controlled memory usage compared to others"
+            echo "     Set MEM_PLOTS=1 to see detailed ASCII memory timeline plots"
+            echo ""
+        else
+            echo "💡 Tip: Set MEM_PLOTS=1 to see ASCII memory timeline plots"
+        fi
         
         # Generate comprehensive summary
         echo "Performance & Resource Usage Summary:"
