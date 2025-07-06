@@ -22,8 +22,7 @@ use crate::index::strategies::shared::{
 use crate::index::strategies::{
     memory_friendly::MemoryFriendlyStrategy, parallel_streaming::ParallelStreamingStrategy,
     rayon_streaming_optimized::RayonStreamingOptimizedStrategy,
-    rayon_wait_free::RayonWaitFreeStrategy, sequential::SequentialStrategy,
-    zero_merge::ZeroMergeStrategy, IndexingStrategy,
+    rayon_wait_free::RayonWaitFreeStrategy, sequential::SequentialStrategy, IndexingStrategy,
 };
 
 /// Information about a BGZF block's location in the file
@@ -52,8 +51,6 @@ pub enum BuildStrategy {
     RayonStreamingOptimized,
     /// Wait-free processing - fastest performing approach (3.409s) 🏆 FASTEST
     RayonWaitFree,
-    /// Zero-merge processing - eliminates O(n²) merge bottleneck for large files 🚀 SCALES
-    ZeroMerge,
     /// Memory-friendly processing - constant RAM footprint for any file size 💾 EFFICIENT
     MemoryFriendly,
 }
@@ -66,7 +63,6 @@ impl BuildStrategy {
             BuildStrategy::Sequential => "sequential",
             BuildStrategy::RayonStreamingOptimized => "rayon_streaming_optimized",
             BuildStrategy::RayonWaitFree => "rayon_wait_free",
-            BuildStrategy::ZeroMerge => "zero_merge",
             BuildStrategy::MemoryFriendly => "memory_friendly",
         }
     }
@@ -77,7 +73,6 @@ impl BuildStrategy {
             BuildStrategy::ParallelStreaming,
             BuildStrategy::RayonStreamingOptimized,
             BuildStrategy::RayonWaitFree,
-            BuildStrategy::ZeroMerge,
             BuildStrategy::MemoryFriendly,
             BuildStrategy::Sequential, // Last because it's often muted
         ]
@@ -141,7 +136,6 @@ impl IndexBuilder {
                 RayonStreamingOptimizedStrategy.build(path_str)
             }
             BuildStrategy::RayonWaitFree => RayonWaitFreeStrategy.build(path_str),
-            BuildStrategy::ZeroMerge => ZeroMergeStrategy.build(path_str),
             BuildStrategy::MemoryFriendly => MemoryFriendlyStrategy.build(path_str),
         }
     }

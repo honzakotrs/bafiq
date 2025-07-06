@@ -49,7 +49,7 @@ bench:
         echo "threads,strategy,timestamp_ms,memory_mb,cpu_percent" > "$MEMORY_CSV"
         
         # Strategies to test (including legacy methods and samtools reference)
-        STRATEGIES=("memory-friendly" "parallel-streaming" "rayon-wait-free" "rayon-streaming-optimized" "zero-merge" "legacy-parallel-raw" "legacy-streaming-raw" "samtools")
+        STRATEGIES=("memory-friendly" "parallel-streaming" "rayon-wait-free" "rayon-streaming-optimized" "legacy-parallel-raw" "legacy-streaming-raw" "samtools")
         
         # Temporary file for collecting all results
         TEMP_RESULTS=$(mktemp)
@@ -111,8 +111,10 @@ bench:
                         continue
                     fi
                     
-                    # Run samtools view -c in background to monitor it
-                    samtools view -c "$BAFIQ_TEST_BAM" > /tmp/samtools_output.log 2>&1 &
+                    # Run samtools view -c with same thread count in background to monitor it
+                    # Note: samtools -@ specifies additional threads, so for total thread_count we use (thread_count - 1)
+                    SAMTOOLS_THREADS=$((thread_count - 1))
+                    samtools view -@ "$SAMTOOLS_THREADS" -c "$BAFIQ_TEST_BAM" > /tmp/samtools_output.log 2>&1 &
                     BENCHMARK_PID=$!
                 else
                     # Map legacy strategy names to actual CLI strategy names

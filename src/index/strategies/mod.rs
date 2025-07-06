@@ -9,7 +9,6 @@ pub mod rayon_streaming_optimized;
 pub mod rayon_wait_free;
 pub mod sequential;
 pub mod shared;
-pub mod zero_merge;
 
 // Common types used across strategies
 #[derive(Clone)]
