@@ -9,7 +9,7 @@ build:
     cargo build --release
 
 # Run index build benchmarks with thread scaling analysis
-# Uses default threads: 1,2
+# Uses default threads: 1,2 (override with BENCH_THREADS="1,2,4,8" just bench)
 bench:
     #!/usr/bin/env bash
     if [ -z "${BAFIQ_TEST_BAM:-}" ]; then
@@ -17,15 +17,23 @@ bench:
         echo "   Example: export BAFIQ_TEST_BAM=/path/to/test.bam"
         echo "   Then run: just bench"
     else
-        # Define thread counts to test (default: 1,2)
-        THREADS="1,2"
+        # Resolve max threads upfront for explicit thread control
+        MAX_CORES=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo "4")
+        
+        # Define thread counts to test (default: 1,2, override with BENCH_THREADS env var)
+        THREADS="${BENCH_THREADS:-1,2}"
+        
+        # Replace "max" with actual core count
+        THREADS=$(echo "$THREADS" | sed "s/max/$MAX_CORES/g")
         
         echo "Running thread scaling benchmarks (development mode)..."
         echo "Thread Scaling Benchmarking with file: $(basename "$BAFIQ_TEST_BAM")"
         echo "Machine Configuration:"
-        echo "   Available CPU cores: $(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo "unknown")"
+        echo "   Available CPU cores: $MAX_CORES"
         echo "   Thread counts to test: $THREADS"
         echo "   Fast development mode with resource monitoring"
+        echo "   💡 Override threads: BENCH_THREADS=\"1,2,4,8,$MAX_CORES\" just bench"
+        echo "   💡 Both bafiq and samtools use explicit --threads/-@ for fair comparison"
         
         # Get original BAM size
         BAM_SIZE=$(stat -f%z "$BAFIQ_TEST_BAM" 2>/dev/null || stat -c%s "$BAFIQ_TEST_BAM" 2>/dev/null || echo "0")
@@ -111,9 +119,13 @@ bench:
                         continue
                     fi
                     
-                    # Run samtools view -c with same thread count in background to monitor it
+                    # Run samtools view -c with explicit thread count
                     # Note: samtools -@ specifies additional threads, so for total thread_count we use (thread_count - 1)
                     SAMTOOLS_THREADS=$((thread_count - 1))
+                    if [ "$SAMTOOLS_THREADS" -lt 0 ]; then
+                        SAMTOOLS_THREADS=0
+                    fi
+                    echo "Running monitored benchmark: $strategy (${thread_count} threads total, -@ ${SAMTOOLS_THREADS})"
                     samtools view -@ "$SAMTOOLS_THREADS" -c "$BAFIQ_TEST_BAM" > /tmp/samtools_output.log 2>&1 &
                     BENCHMARK_PID=$!
                 else
@@ -133,7 +145,8 @@ bench:
                     # Clean up any existing index to ensure fresh build (not needed for samtools)
                     rm -f "${BAFIQ_TEST_BAM}.bfi"
                     
-                    # Run bafiq with CLI threads argument in background to monitor it
+                    # Run bafiq with explicit thread count
+                    echo "Running monitored benchmark: $strategy (${thread_count} threads)"
                     ./target/release/bafiq --threads "$thread_count" index --strategy "$CLI_STRATEGY" "$BAFIQ_TEST_BAM" > /tmp/bafiq_output.log 2>&1 &
                     BENCHMARK_PID=$!
                 fi
@@ -184,10 +197,13 @@ bench:
                     # Convert N/A to 0.0 for CSV
                     CSV_INDEX_SIZE=$([ "$INDEX_SIZE_MB" = "N/A" ] && echo "0.0" || echo "$INDEX_SIZE_MB")
                     
-                    # Add to CSV
-                    echo "$thread_count,$strategy,$DURATION,$PEAK_MEMORY,$AVG_MEMORY,$PEAK_CPU,$AVG_CPU,$CSV_INDEX_SIZE,$SAMPLE_COUNT" >> "$COMBINED_CSV"
+                    # Thread count is already resolved, use directly
+                    CSV_THREAD_COUNT="$thread_count"
                     
-                    # Store result for summary
+                    # Add to CSV
+                    echo "$CSV_THREAD_COUNT,$strategy,$DURATION,$PEAK_MEMORY,$AVG_MEMORY,$PEAK_CPU,$AVG_CPU,$CSV_INDEX_SIZE,$SAMPLE_COUNT" >> "$COMBINED_CSV"
+                    
+                    # Store result for summary (keep original thread_count for display)
                     echo "$thread_count,$strategy,$DURATION_SEC,$PEAK_MEMORY_GB,$AVG_MEMORY,$PEAK_CPU,$AVG_CPU,$INDEX_SIZE_MB" >> "$TEMP_RESULTS"
                     
                     if [ "$strategy" = "samtools" ]; then
@@ -454,9 +470,17 @@ bench-view:
         echo "   Example: export BAFIQ_TEST_BAM=/path/to/test.bam"
         echo "   Then run: just bench-view"
     else
+        # Resolve thread count upfront for fair comparison
+        THREADS="${BENCH_THREADS:-max}"
+        MAX_CORES=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo "4")
+        
+        # Replace "max" with actual core count
+        THREADS=$(echo "$THREADS" | sed "s/max/$MAX_CORES/g")
+        
         echo "Running view performance benchmark..."
         echo "   BAM file: $BAFIQ_TEST_BAM"
         echo "   Query: unmapped reads (-f 0x4 / -f 4 / --unmapped)"
+        echo "   Thread count: $THREADS (both tools use explicit --threads/-@)"
         echo ""
         
         # Build bafiq first
@@ -476,15 +500,21 @@ bench-view:
         fi
         
         echo "🔧 Building index if needed..."
-        time ./target/release/bafiq index "$BAFIQ_TEST_BAM" --strategy rayon-wait-free
+        time ./target/release/bafiq --threads "$THREADS" index "$BAFIQ_TEST_BAM" --strategy rayon-wait-free
         
         echo ""
         echo "🏁 BENCHMARK: View unmapped reads"
         echo "================================================"
         
+        # Calculate samtools thread argument (samtools -@ specifies additional threads)
+        SAMTOOLS_THREADS=$((THREADS - 1))
+        if [ "$SAMTOOLS_THREADS" -lt 0 ]; then
+            SAMTOOLS_THREADS=0
+        fi
+        
         # Run samtools view (baseline) - include headers for fair comparison
-        echo "⏱️  Running samtools view..."
-        time samtools view -h -f 0x4 "$BAFIQ_TEST_BAM" > "$TEMP_DIR/out.samtools.sam"
+        echo "⏱️  Running samtools view (${THREADS} threads total, -@ ${SAMTOOLS_THREADS})..."
+        time samtools view -@ "$SAMTOOLS_THREADS" -h -f 0x4 "$BAFIQ_TEST_BAM" > "$TEMP_DIR/out.samtools.sam"
         SAMTOOLS_COUNT=$(wc -l < "$TEMP_DIR/out.samtools.sam")
         SAMTOOLS_READS=$(grep -v "^@" "$TEMP_DIR/out.samtools.sam" | wc -l)
         echo "   Samtools found: $SAMTOOLS_READS reads (total: $SAMTOOLS_COUNT lines with headers)"
@@ -492,8 +522,8 @@ bench-view:
         echo ""
         
         # Run bafiq view (numeric flag - samtools compatibility)
-        echo "⚡ Running bafiq view (numeric flag)..."
-        time ./target/release/bafiq view -f 4 "$BAFIQ_TEST_BAM" > "$TEMP_DIR/out.bafiq.sam"
+        echo "⚡ Running bafiq view (numeric flag, ${THREADS} threads)..."
+        time ./target/release/bafiq --threads "$THREADS" view -f 4 "$BAFIQ_TEST_BAM" > "$TEMP_DIR/out.bafiq.sam"
         BAFIQ_COUNT=$(wc -l < "$TEMP_DIR/out.bafiq.sam")
         BAFIQ_READS=$(grep -v "^@" "$TEMP_DIR/out.bafiq.sam" | wc -l)
         echo "   bafiq found: $BAFIQ_READS reads (total: $BAFIQ_COUNT lines with headers)"
@@ -501,8 +531,8 @@ bench-view:
         echo ""
         
         # Run bafiq view (named flag - user-friendly syntax)
-        echo "🚀 Running bafiq view (named flag)..."
-        time ./target/release/bafiq view --unmapped "$BAFIQ_TEST_BAM" > "$TEMP_DIR/out.bafiq.named.sam"
+        echo "🚀 Running bafiq view (named flag, ${THREADS} threads)..."
+        time ./target/release/bafiq --threads "$THREADS" view --unmapped "$BAFIQ_TEST_BAM" > "$TEMP_DIR/out.bafiq.named.sam"
         BAFIQ_NAMED_COUNT=$(wc -l < "$TEMP_DIR/out.bafiq.named.sam")
         BAFIQ_NAMED_READS=$(grep -v "^@" "$TEMP_DIR/out.bafiq.named.sam" | wc -l)
         echo "   bafiq found: $BAFIQ_NAMED_READS reads (total: $BAFIQ_NAMED_COUNT lines with headers)"
@@ -541,62 +571,6 @@ bench-view:
         echo "   (Directory preserved for manual inspection)"
     fi
 
-# Export CSV timelines for memory usage analysis
-bench-csv:
-    #!/usr/bin/env bash
-    if [ -z "${BAFIQ_TEST_BAM:-}" ]; then
-        echo "Set BAFIQ_TEST_BAM environment variable to run CSV export benchmarks"
-        echo "   Example: export BAFIQ_TEST_BAM=/path/to/test.bam"
-        echo "   Then run: just bench-csv"
-    else
-        echo "Running benchmarks with CSV timeline export..."
-        echo "   BAM file: $BAFIQ_TEST_BAM"
-        echo "   Output: ./memory_timelines/ directory"
-        echo ""
-        
-        # Create CSV export directory
-        mkdir -p ./memory_timelines
-        
-        # Run benchmarks with CSV export
-        BAFIQ_EXPORT_CSV=./memory_timelines cargo bench --bench index_build_bench
-        
-        echo ""
-        echo "📊 CSV files exported to ./memory_timelines/"
-        echo "   You can now analyze memory usage patterns:"
-        echo ""
-        echo "   # Compare memory_friendly vs others"
-        echo "   python3 -c \""
-        echo "import pandas as pd"
-        echo "import matplotlib.pyplot as plt"
-        echo "import glob"
-        echo ""
-        echo "# Load all CSV files"
-        echo "for csv_file in glob.glob('./memory_timelines/*_timeline.csv'):"
-        echo "    df = pd.read_csv(csv_file)"
-        echo "    strategy = df['strategy'].iloc[0]"
-        echo "    plt.plot(df['time_ms'], df['memory_mb'], label=strategy)"
-        echo ""
-        echo "plt.xlabel('Time (ms)')"
-        echo "plt.ylabel('Memory (MB)')"
-        echo "plt.title('Memory Usage Timeline - All Strategies')"
-        echo "plt.legend()"
-        echo "plt.grid(True)"
-        echo "plt.show()"
-        echo "\""
-        echo ""
-        echo "   # Focus on memory_friendly alone"
-        echo "   python3 -c \""
-        echo "import pandas as pd"
-        echo "import matplotlib.pyplot as plt"
-        echo "df = pd.read_csv('./memory_timelines/memory_friendly_timeline.csv')"
-        echo "plt.plot(df['time_ms'], df['memory_mb'])"
-        echo "plt.xlabel('Time (ms)')"
-        echo "plt.ylabel('Memory (MB)')"
-        echo "plt.title('Memory Usage: memory_friendly Strategy')"
-        echo "plt.grid(True)"
-        echo "plt.show()"
-        echo "\""
-    fi
 
 # Show available commands
 help:
