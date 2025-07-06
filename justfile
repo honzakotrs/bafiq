@@ -57,7 +57,7 @@ bench:
         echo "threads,strategy,timestamp_ms,memory_mb,cpu_percent" > "$MEMORY_CSV"
         
         # Strategies to test (including legacy methods and samtools reference)
-        STRATEGIES=("memory-friendly" "parallel-streaming" "rayon-wait-free" "rayon-streaming-optimized" "legacy-parallel-raw" "legacy-streaming-raw" "samtools")
+        STRATEGIES=("memory-friendly" "parallel-streaming" "rayon-wait-free" "rayon-streaming-optimized" "legacy-parallel-raw" "legacy-streaming-raw" "bafiq-fast-count" "samtools")
         
         # Temporary file for collecting all results
         TEMP_RESULTS=$(mktemp)
@@ -128,6 +128,11 @@ bench:
                     echo "Running monitored benchmark: $strategy (${thread_count} threads total, -@ ${SAMTOOLS_THREADS})"
                     samtools view -@ "$SAMTOOLS_THREADS" -c "$BAFIQ_TEST_BAM" > /tmp/samtools_output.log 2>&1 &
                     BENCHMARK_PID=$!
+                elif [ "$strategy" = "bafiq-fast-count" ]; then
+                    # Run bafiq fast-count - direct comparison to samtools view -c
+                    echo "Running monitored benchmark: $strategy (${thread_count} threads, no index building)"
+                    ./target/release/bafiq --threads "$thread_count" fast-count "$BAFIQ_TEST_BAM" > /tmp/bafiq_fastcount_output.log 2>&1 &
+                    BENCHMARK_PID=$!
                 else
                     # Map legacy strategy names to actual CLI strategy names
                     case "$strategy" in
@@ -163,11 +168,15 @@ bench:
                 DURATION_SEC=$(echo "scale=3; $DURATION / 1000" | bc -l 2>/dev/null || echo "0.000")
                 
                 if [ $BENCHMARK_EXIT_CODE -eq 0 ]; then
-                    # Get index size (only for bafiq strategies)
+                    # Get index size (only for bafiq index strategies)
                     if [ "$strategy" = "samtools" ]; then
                         INDEX_SIZE_MB="N/A"
                         # Get record count from samtools output
                         SAMTOOLS_RECORDS=$(cat /tmp/samtools_output.log 2>/dev/null || echo "0")
+                    elif [ "$strategy" = "bafiq-fast-count" ]; then
+                        INDEX_SIZE_MB="N/A"
+                        # Get record count from bafiq fast-count output
+                        BAFIQ_FASTCOUNT_RECORDS=$(cat /tmp/bafiq_fastcount_output.log 2>/dev/null || echo "0")
                     else
                         if [ -f "${BAFIQ_TEST_BAM}.bfi" ]; then
                             INDEX_SIZE=$(stat -f%z "${BAFIQ_TEST_BAM}.bfi" 2>/dev/null || stat -c%s "${BAFIQ_TEST_BAM}.bfi" 2>/dev/null || echo "0")
@@ -208,6 +217,8 @@ bench:
                     
                     if [ "$strategy" = "samtools" ]; then
                         echo "   Time: ${DURATION_SEC}s, Peak Memory: ${PEAK_MEMORY_GB}GB, Avg CPU: ${AVG_CPU}%, Records: $SAMTOOLS_RECORDS"
+                    elif [ "$strategy" = "bafiq-fast-count" ]; then
+                        echo "   Time: ${DURATION_SEC}s, Peak Memory: ${PEAK_MEMORY_GB}GB, Avg CPU: ${AVG_CPU}%, Records: $BAFIQ_FASTCOUNT_RECORDS"
                     else
                         echo "   Time: ${DURATION_SEC}s, Peak Memory: ${PEAK_MEMORY_GB}GB, Avg CPU: ${AVG_CPU}%"
                     fi
@@ -215,6 +226,8 @@ bench:
                     echo "   ❌ FAILED"
                     if [ "$strategy" = "samtools" ]; then
                         cat /tmp/samtools_output.log
+                    elif [ "$strategy" = "bafiq-fast-count" ]; then
+                        cat /tmp/bafiq_fastcount_output.log
                     else
                         cat /tmp/bafiq_output.log
                     fi
@@ -308,7 +321,7 @@ bench:
         }
         
         # Generate plots for interesting strategies
-        PLOT_STRATEGIES=("memory-friendly" "rayon-wait-free" "parallel-streaming")
+        PLOT_STRATEGIES=("memory-friendly" "rayon-wait-free" "parallel-streaming" "bafiq-fast-count")
         for strategy in "${PLOT_STRATEGIES[@]}"; do
             for thread_count in "${THREAD_ARRAY[@]}"; do
                 generate_ascii_plot "$strategy" "$thread_count"
