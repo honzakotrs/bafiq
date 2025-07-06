@@ -244,6 +244,10 @@ pub struct SharedArgs {
     #[arg(long = "force-rebuild")]
     pub force_rebuild: bool,
 
+    /// Use massively parallel reading (experimental - may be 5-10x faster)
+    #[arg(long = "massively-parallel")]
+    pub massively_parallel: bool,
+
     /// The input BAM/CRAM file
     pub input: PathBuf,
 }
@@ -427,15 +431,26 @@ fn cmd_view(args: SharedArgs, thread_count: Option<usize>) -> Result<()> {
     // Get the index accessor - works with both compressed and uncompressed indexes
     let index_accessor = serializable_index.get_index();
 
-    // Retrieve matching reads using parallel processing (always enabled for best performance)
-    // This works seamlessly with both compressed and uncompressed indexes!
-    index_accessor.retrieve_reads_parallel(
-        &args.input,
-        required_bits,
-        forbidden_bits,
-        &mut writer,
-        thread_count,
-    )?;
+    // Choose parallel strategy based on user preference
+    if args.massively_parallel {
+        // Use massively parallel reading (experimental - may be 5-10x faster)
+        index_accessor.retrieve_reads_massively_parallel(
+            &args.input,
+            required_bits,
+            forbidden_bits,
+            &mut writer,
+            thread_count,
+        )?;
+    } else {
+        // Use standard parallel processing
+        index_accessor.retrieve_reads_parallel(
+            &args.input,
+            required_bits,
+            forbidden_bits,
+            &mut writer,
+            thread_count,
+        )?;
+    }
 
     Ok(())
 }
