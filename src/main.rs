@@ -304,22 +304,6 @@ enum Commands {
         /// Flag filtering options
         #[command(flatten)]
         flags: FlagFilter,
-
-        /// Use experimental dual-direction scanning (scan from both ends simultaneously)
-        #[arg(long)]
-        dual_direction: bool,
-
-        /// Use multi-threaded BGZF decompression (like samtools) - experimental
-        #[arg(long)]
-        mt_decomp: bool,
-
-        /// Use simplified parallel decompression (Rayon-based)
-        #[arg(long)]
-        simple_parallel: bool,
-
-        /// Use thread pool parallel decompression (chunked)
-        #[arg(long)]
-        thread_pool: bool,
     },
 
     /// Load and query from saved index
@@ -371,22 +355,7 @@ fn main() -> Result<()> {
         Commands::View(args) => cmd_view(args, cli.threads),
         Commands::Index(args) => cmd_index(args),
         Commands::Query(args) => cmd_query(args),
-        Commands::FastCount {
-            input,
-            flags,
-            dual_direction,
-            mt_decomp,
-            simple_parallel,
-            thread_pool,
-        } => cmd_fast_count(
-            input,
-            flags,
-            dual_direction,
-            mt_decomp,
-            simple_parallel,
-            thread_pool,
-            cli.threads,
-        ),
+        Commands::FastCount { input, flags } => cmd_fast_count(input, flags, cli.threads),
         Commands::LoadIndex {
             input,
             required,
@@ -685,68 +654,20 @@ fn format_timestamp(timestamp: u64) -> String {
     }
 }
 
-fn cmd_fast_count(
-    input: PathBuf,
-    flags: FlagFilter,
-    dual_direction: bool,
-    mt_decomp: bool,
-    simple_parallel: bool,
-    thread_pool: bool,
-    threads: Option<usize>,
-) -> Result<()> {
+fn cmd_fast_count(input: PathBuf, flags: FlagFilter, threads: Option<usize>) -> Result<()> {
     let input_str = input.to_str().ok_or_else(|| anyhow!("Invalid file path"))?;
 
     // Parse flags using the shared FlagFilter logic
     let (required_flags, forbidden_flags) = flags.gather_bits()?;
 
-    if simple_parallel {
-        eprintln!("Fast count mode - SIMPLE PARALLEL (Rayon-based)");
-    } else if thread_pool {
-        eprintln!("Fast count mode - THREAD POOL (chunked)");
-    } else if mt_decomp {
-        eprintln!("Fast count mode - MULTI-THREADED DECOMPRESSION (experimental)");
-    } else if dual_direction {
-        eprintln!("Fast count mode - DUAL DIRECTION SCAN (experimental)");
-    } else {
-        eprintln!("Fast count mode (no index building)");
-    }
+    eprintln!("Fast count mode (no index building)");
     eprintln!("   File: {}", input_str);
     eprintln!("   Required flags: 0x{:x}", required_flags);
     eprintln!("   Forbidden flags: 0x{:x}", forbidden_flags);
 
-    // Use appropriate scan mode
     let start = std::time::Instant::now();
-    let count = if simple_parallel {
-        bafiq::benchmark::count_flags_simple_parallel_decompression(
-            input_str,
-            required_flags,
-            forbidden_flags,
-        )?
-    } else if thread_pool {
-        bafiq::benchmark::count_flags_libdeflate_thread_pool(
-            input_str,
-            required_flags,
-            forbidden_flags,
-        )?
-    } else if mt_decomp {
-        bafiq::benchmark::count_flags_multithreaded_decompression(
-            input_str,
-            required_flags,
-            forbidden_flags,
-        )?
-    } else {
-        let builder = IndexBuilder::new();
-        if dual_direction {
-            builder.scan_count_dual_direction(
-                input_str,
-                required_flags,
-                forbidden_flags,
-                threads,
-            )?
-        } else {
-            builder.scan_count(input_str, required_flags, forbidden_flags, threads)?
-        }
-    };
+    let count =
+        IndexBuilder::new().scan_count(input_str, required_flags, forbidden_flags, threads)?;
     let scan_time = start.elapsed();
 
     println!("{}", count);
