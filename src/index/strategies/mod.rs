@@ -3,7 +3,7 @@ use anyhow::Result;
 
 // Re-export all strategy implementations
 pub mod adaptive_memory_mapped;
-pub mod memory_friendly;
+pub mod constant_memory;
 pub mod parallel_streaming;
 pub mod rayon_wait_free;
 pub mod shared;

@@ -13,7 +13,7 @@ use std::thread as std_thread;
 // Import strategies
 use crate::index::strategies::shared::count_flags_in_block_optimized;
 use crate::index::strategies::{
-    adaptive_memory_mapped::AdaptiveMemoryMappedStrategy, memory_friendly::ConstantMemoryStrategy,
+    adaptive_memory_mapped::AdaptiveMemoryMappedStrategy, constant_memory::ConstantMemoryStrategy,
     parallel_streaming::ParallelStreamingStrategy, rayon_wait_free::RayonWaitFreeStrategy,
     IndexingStrategy,
 };

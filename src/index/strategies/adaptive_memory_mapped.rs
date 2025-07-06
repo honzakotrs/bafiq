@@ -193,7 +193,7 @@ impl AdaptiveMemoryMappedStrategy {
     fn fallback_streaming_mode(&self, bam_path: &str, memory_controller: &Arc<AdaptiveMemoryController>) -> Result<FlagIndex> {
         // Delegate to ConstantMemory strategy implementation
         // This is our proven fallback for memory-constrained environments
-        use super::memory_friendly::ConstantMemoryStrategy;
+        use super::constant_memory::ConstantMemoryStrategy;
         let fallback_strategy = ConstantMemoryStrategy;
         fallback_strategy.build(bam_path)
     }
