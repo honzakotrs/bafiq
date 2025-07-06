@@ -300,48 +300,32 @@ impl<'a> IndexAccessor<'a> {
         let mut sorted_blocks = block_ids.clone();
         sorted_blocks.sort();
 
-        // **HYPERJUMP OPTIMIZATION**: Group consecutive blocks for efficient streaming
-        let block_ranges = Self::group_consecutive_blocks(&sorted_blocks);
-
-        eprintln!(
-            "🚀 Hyperjump optimization: {} blocks → {} ranges ({}% seek reduction)",
-            sorted_blocks.len(),
-            block_ranges.len(),
-            if sorted_blocks.len() > 0 {
-                100 * (sorted_blocks.len() - block_ranges.len()) / sorted_blocks.len()
-            } else {
-                0
-            }
-        );
-
-        // Process each range of consecutive blocks
-        for (start_block, end_block) in block_ranges {
-            // Seek to the start of the range
-            let virtual_offset = (start_block as u64) << 16;
+        // Process each block that contains matching reads
+        for &block_id in sorted_blocks.iter() {
+            // Convert file position (block_id) to BGZF virtual offset
+            // Virtual offset = (block_file_position << 16) | within_block_offset
+            // For block start, within_block_offset = 0
+            let virtual_offset = (block_id as u64) << 16;
             reader.seek(virtual_offset as i64)?;
 
-            // Stream through all blocks in the range
+            // Read all records until we detect we've moved to a different block
             loop {
+                // CRITICAL FIX: Check virtual offset BEFORE reading to ensure we're in the right block
                 let current_virtual_offset = reader.tell();
                 let current_block_position = current_virtual_offset >> 16;
 
-                // Stop if we've moved beyond the end of our range
-                if (current_block_position as i64) > end_block {
+                // If we've moved to a different block, stop processing this block
+                if (current_block_position as i64) != block_id {
                     break;
                 }
 
                 match reader.read(&mut record) {
                     Some(Ok(())) => {
-                        // Only process if we're within our target range
-                        if (current_block_position as i64) >= start_block
-                            && (current_block_position as i64) <= end_block
+                        // Check if this record matches our criteria
+                        let flags = record.flags();
+                        if (flags & required_bits) == required_bits && (flags & forbidden_bits) == 0
                         {
-                            let flags = record.flags();
-                            if (flags & required_bits) == required_bits
-                                && (flags & forbidden_bits) == 0
-                            {
-                                writer.write(&record)?;
-                            }
+                            writer.write(&record)?;
                         }
                     }
                     Some(Err(e)) => return Err(e.into()),
@@ -377,19 +361,6 @@ impl<'a> IndexAccessor<'a> {
         let mut sorted_blocks = block_ids.clone();
         sorted_blocks.sort();
 
-        // Calculate hyperjump effectiveness for logging
-        let total_ranges = Self::group_consecutive_blocks(&sorted_blocks).len();
-        eprintln!(
-            "🚀 Parallel hyperjump: {} blocks → {} ranges ({}% seek reduction)",
-            sorted_blocks.len(),
-            total_ranges,
-            if sorted_blocks.len() > 0 {
-                100 * (sorted_blocks.len() - total_ranges) / sorted_blocks.len()
-            } else {
-                0
-            }
-        );
-
         const RECORDS_PER_BATCH: usize = 100; // Optimal batch size for channel efficiency
         let bam_path_str = bam_path
             .as_ref()
@@ -420,22 +391,67 @@ impl<'a> IndexAccessor<'a> {
                         let mut current_batch = Vec::with_capacity(RECORDS_PER_BATCH);
                         let mut total_processed = 0;
 
-                        // **HYPERJUMP OPTIMIZATION**: Group consecutive blocks for efficient streaming
-                        let block_ranges = Self::group_consecutive_blocks(&block_chunk);
+                        // Process each block in this worker's chunk
+                        for &block_id in &block_chunk {
+                            // Convert file position (block_id) to BGZF virtual offset
+                            let virtual_offset = (block_id as u64) << 16;
+                            reader.seek(virtual_offset as i64)?;
 
-                        // Process each range of consecutive blocks
-                        for (start_block, end_block) in block_ranges {
-                            let processed = Self::process_block_range(
-                                &mut reader,
-                                start_block,
-                                end_block,
-                                required_bits,
-                                forbidden_bits,
-                                &mut current_batch,
-                                RECORDS_PER_BATCH,
-                                &sender_clone,
-                            )?;
-                            total_processed += processed;
+                            // Read all records until we detect we've moved to a different block
+                            loop {
+                                // CRITICAL FIX: Check virtual offset BEFORE reading to ensure we're in the right block
+                                let current_virtual_offset = reader.tell();
+                                let current_block_position = current_virtual_offset >> 16;
+
+                                // If we've moved to a different block, stop processing this block
+                                if (current_block_position as i64) != block_id {
+                                    break;
+                                }
+
+                                match reader.read(&mut record) {
+                                    Some(Ok(())) => {
+                                        // Check if this record matches our criteria
+                                        let flags = record.flags();
+                                        if (flags & required_bits) == required_bits
+                                            && (flags & forbidden_bits) == 0
+                                        {
+                                            // Clone the record for storage
+                                            let mut stored_record = rust_htslib::bam::Record::new();
+                                            stored_record.set(
+                                                record.qname(),
+                                                Some(&record.cigar()),
+                                                &record.seq().as_bytes(),
+                                                record.qual(),
+                                            );
+                                            // Copy additional fields
+                                            stored_record.set_flags(record.flags());
+                                            stored_record.set_tid(record.tid());
+                                            stored_record.set_pos(record.pos());
+                                            stored_record.set_mtid(record.mtid());
+                                            stored_record.set_mpos(record.mpos());
+                                            stored_record.set_insert_size(record.insert_size());
+                                            stored_record.set_mapq(record.mapq());
+
+                                            current_batch.push(stored_record);
+                                            total_processed += 1;
+
+                                            // Send batch when full (reduce channel overhead)
+                                            if current_batch.len() >= RECORDS_PER_BATCH {
+                                                if sender_clone
+                                                    .send(std::mem::take(&mut current_batch))
+                                                    .is_err()
+                                                {
+                                                    break; // Consumer hung up
+                                                }
+                                                current_batch =
+                                                    Vec::with_capacity(RECORDS_PER_BATCH);
+                                            }
+                                        }
+                                    }
+                                    Some(Err(e)) => return Err(e.into()),
+                                    None => break, // End of file
+                                }
+                            }
                         }
 
                         // Send remaining records in final batch
@@ -477,268 +493,6 @@ impl<'a> IndexAccessor<'a> {
             Ok(())
         })
         .unwrap()
-    }
-
-    /// **MASSIVELY PARALLEL RETRIEVE** - Range-based offset partitioning
-    ///
-    /// **ARCHITECTURE**: Instead of chunking blocks, we partition by file position ranges
-    /// and let each worker process its range completely independently with direct output.
-    ///
-    /// **Key Improvements**:
-    /// - **Range-based partitioning**: Split by file position ranges, not block counts
-    /// - **Independent parallel readers**: Each worker processes ranges independently
-    /// - **Direct output**: No channel overhead, each worker writes directly
-    /// - **Load balancing**: Dynamic range sizing based on block density
-    /// - **Zero coordination**: Workers operate completely independently
-    ///
-    /// **Expected Performance**: 5-10x faster than current approach by eliminating
-    /// channel bottlenecks and enabling true parallel I/O
-    pub fn retrieve_reads_massively_parallel<P: AsRef<std::path::Path>>(
-        &self,
-        bam_path: P,
-        required_bits: u16,
-        forbidden_bits: u16,
-        writer: &mut rust_htslib::bam::Writer,
-        thread_count: Option<usize>,
-    ) -> anyhow::Result<()> {
-        use rust_htslib::bam::Read;
-
-        // Get block IDs that contain matching reads
-        let block_ids = self.blocks_for(required_bits, forbidden_bits);
-
-        if block_ids.is_empty() {
-            return Ok(()); // No matching reads
-        }
-
-        // Sort blocks for range analysis
-        let mut sorted_blocks = block_ids.clone();
-        sorted_blocks.sort();
-
-        let num_threads = thread_count.unwrap_or_else(|| rayon::current_num_threads());
-
-        // **RANGE-BASED PARTITIONING**: Split by file position ranges
-        let ranges = Self::partition_blocks_by_ranges(&sorted_blocks, num_threads);
-
-        eprintln!(
-            "🚀 Massively parallel: {} blocks → {} ranges across {} threads",
-            sorted_blocks.len(),
-            ranges.len(),
-            num_threads
-        );
-
-        let bam_path_str = bam_path
-            .as_ref()
-            .to_str()
-            .ok_or_else(|| anyhow::anyhow!("Invalid BAM path"))?;
-
-        // **PARALLEL RANGE PROCESSING**: Each worker processes its range independently
-        let results = {
-            let handles: Vec<_> = ranges
-                .into_iter()
-                .map(|(_start_block, _end_block, block_list)| {
-                    let bam_path_str = bam_path_str.to_string();
-                    std::thread::spawn(move || -> anyhow::Result<Vec<rust_htslib::bam::Record>> {
-                        let mut reader = rust_htslib::bam::Reader::from_path(&bam_path_str)?;
-                        let mut record = rust_htslib::bam::Record::new();
-                        let mut records = Vec::new();
-
-                        // Process this worker's range of blocks
-                        for &block_id in &block_list {
-                            // Seek to this block
-                            let virtual_offset = (block_id as u64) << 16;
-                            reader.seek(virtual_offset as i64)?;
-
-                            // Read all records in this block
-                            loop {
-                                let current_virtual_offset = reader.tell();
-                                let current_block_position = current_virtual_offset >> 16;
-
-                                // Stop if we've moved beyond this block
-                                if (current_block_position as i64) != block_id {
-                                    break;
-                                }
-
-                                match reader.read(&mut record) {
-                                    Some(Ok(())) => {
-                                        let flags = record.flags();
-                                        if (flags & required_bits) == required_bits
-                                            && (flags & forbidden_bits) == 0
-                                        {
-                                            // Clone record for storage
-                                            let mut stored_record = rust_htslib::bam::Record::new();
-                                            stored_record.set(
-                                                record.qname(),
-                                                Some(&record.cigar()),
-                                                &record.seq().as_bytes(),
-                                                record.qual(),
-                                            );
-                                            records.push(stored_record);
-                                        }
-                                    }
-                                    Some(Err(e)) => return Err(e.into()),
-                                    None => break, // End of file
-                                }
-                            }
-                        }
-
-                        Ok(records)
-                    })
-                })
-                .collect();
-
-            // Collect all results
-            let mut all_results = Vec::new();
-            for handle in handles {
-                match handle.join() {
-                    Ok(result) => all_results.push(result?),
-                    Err(_) => return Err(anyhow::anyhow!("Thread panicked")),
-                }
-            }
-            all_results
-        };
-
-        // **SEQUENTIAL OUTPUT**: Write all records in block order
-        let mut total_written = 0;
-        for record_batch in results {
-            for record in record_batch {
-                writer.write(&record)?;
-                total_written += 1;
-            }
-        }
-
-        eprintln!(
-            "🚀 Massively parallel complete: {} records written",
-            total_written
-        );
-        Ok(())
-    }
-
-    /// Group consecutive block IDs into ranges for efficient streaming
-    fn group_consecutive_blocks(sorted_blocks: &[i64]) -> Vec<(i64, i64)> {
-        if sorted_blocks.is_empty() {
-            return Vec::new();
-        }
-
-        let mut ranges = Vec::new();
-        let mut start = sorted_blocks[0];
-        let mut end = start;
-
-        for &block_id in &sorted_blocks[1..] {
-            if block_id == end + 1 {
-                // Consecutive block, extend current range
-                end = block_id;
-            } else {
-                // Gap found, finalize current range and start new one
-                ranges.push((start, end));
-                start = block_id;
-                end = block_id;
-            }
-        }
-
-        // Add the final range
-        ranges.push((start, end));
-        ranges
-    }
-
-    /// Process a range of consecutive blocks efficiently by streaming
-    fn process_block_range(
-        reader: &mut rust_htslib::bam::Reader,
-        start_block: i64,
-        end_block: i64,
-        required_bits: u16,
-        forbidden_bits: u16,
-        current_batch: &mut Vec<rust_htslib::bam::Record>,
-        batch_size: usize,
-        sender: &crossbeam::channel::Sender<Vec<rust_htslib::bam::Record>>,
-    ) -> anyhow::Result<usize> {
-        use rust_htslib::bam::Read;
-
-        let mut record = rust_htslib::bam::Record::new();
-        let mut processed_count = 0;
-
-        // Seek to the start of the range
-        let virtual_offset = (start_block as u64) << 16;
-        reader.seek(virtual_offset as i64)?;
-
-        // Stream through all blocks in the range
-        loop {
-            let current_virtual_offset = reader.tell();
-            let current_block_position = current_virtual_offset >> 16;
-
-            // Stop if we've moved beyond the end of our range
-            if (current_block_position as i64) > end_block {
-                break;
-            }
-
-            match reader.read(&mut record) {
-                Some(Ok(())) => {
-                    // Only process if we're within our target range
-                    if (current_block_position as i64) >= start_block
-                        && (current_block_position as i64) <= end_block
-                    {
-                        let flags = record.flags();
-                        if (flags & required_bits) == required_bits && (flags & forbidden_bits) == 0
-                        {
-                            // Clone the record for storage
-                            let mut stored_record = rust_htslib::bam::Record::new();
-                            stored_record.set(
-                                record.qname(),
-                                Some(&record.cigar()),
-                                &record.seq().as_bytes(),
-                                record.qual(),
-                            );
-                            // Copy additional fields
-                            stored_record.set_flags(record.flags());
-                            stored_record.set_tid(record.tid());
-                            stored_record.set_pos(record.pos());
-                            stored_record.set_mtid(record.mtid());
-                            stored_record.set_mpos(record.mpos());
-                            stored_record.set_insert_size(record.insert_size());
-                            stored_record.set_mapq(record.mapq());
-
-                            current_batch.push(stored_record);
-                            processed_count += 1;
-
-                            // Send batch when full
-                            if current_batch.len() >= batch_size {
-                                if sender.send(std::mem::take(current_batch)).is_err() {
-                                    break; // Consumer hung up
-                                }
-                                *current_batch = Vec::with_capacity(batch_size);
-                            }
-                        }
-                    }
-                }
-                Some(Err(e)) => return Err(e.into()),
-                None => break, // End of file
-            }
-        }
-
-        Ok(processed_count)
-    }
-
-    /// Partition blocks into ranges for optimal parallel processing
-    fn partition_blocks_by_ranges(
-        sorted_blocks: &[i64],
-        num_threads: usize,
-    ) -> Vec<(i64, i64, Vec<i64>)> {
-        if sorted_blocks.is_empty() {
-            return Vec::new();
-        }
-
-        let blocks_per_thread = (sorted_blocks.len() + num_threads - 1) / num_threads;
-        let mut ranges = Vec::new();
-
-        for chunk in sorted_blocks.chunks(blocks_per_thread) {
-            if !chunk.is_empty() {
-                let start_block = chunk[0];
-                let end_block = chunk[chunk.len() - 1];
-                let block_list = chunk.to_vec();
-                ranges.push((start_block, end_block, block_list));
-            }
-        }
-
-        ranges
     }
 }
 
