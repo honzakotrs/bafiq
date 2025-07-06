@@ -489,7 +489,7 @@ test:
 clean:
     cargo clean
 
-# Benchmark view performance: bafiq vs samtools with CSV output and memory monitoring
+# Benchmark view performance: bafiq vs samtools (vs sambamba if available) with comprehensive CSV metrics
 bench-view:
     #!/usr/bin/env bash
     if [ -z "${BAFIQ_TEST_BAM:-}" ]; then
@@ -497,59 +497,108 @@ bench-view:
         echo "   Example: export BAFIQ_TEST_BAM=/path/to/test.bam"
         echo "   Then run: just bench-view"
     else
-        # Resolve thread count upfront for fair comparison
-        THREADS="${BENCH_THREADS:-max}"
+        # Resolve max threads upfront for explicit thread control
         MAX_CORES=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo "4")
+        
+        # Define thread counts to test (default: 1,2, override with BENCH_THREADS env var)
+        THREADS="${BENCH_THREADS:-1,2}"
         
         # Replace "max" with actual core count
         THREADS=$(echo "$THREADS" | sed "s/max/$MAX_CORES/g")
         
-        echo "Running view performance benchmark with monitoring..."
-        echo "   BAM file: $BAFIQ_TEST_BAM"
-        echo "   Query: unmapped reads (-f 0x4 / -f 4 / --unmapped)"
-        if [ "$THREADS" = "auto" ]; then
-            echo "   Thread count: auto (tools use default thread behavior)"
+        # Define BAM files to test (default: use BAFIQ_TEST_BAM, override with BAFIQ_SOURCE_BAMS)
+        if [ -n "${BAFIQ_SOURCE_BAMS:-}" ]; then
+            SOURCE_BAMS="$BAFIQ_SOURCE_BAMS"
+            echo "Using BAFIQ_SOURCE_BAMS (ignoring BAFIQ_TEST_BAM): $SOURCE_BAMS"
         else
-            echo "   Thread count: $THREADS (both tools use explicit --threads/-@)"
+            SOURCE_BAMS="$BAFIQ_TEST_BAM"
         fi
+        
+        # Define flags to test (default: 0x4 unmapped bit, override with BAFIQ_FLAGS)
+        FLAGS="${BAFIQ_FLAGS:-0x4}"
+        
+        echo "Running comprehensive view performance benchmark with monitoring..."
+        echo "View Performance Benchmarking parameters:"
+        echo "   BAM files: $SOURCE_BAMS"
+        echo "   Flags: $FLAGS"
+        echo "Machine Configuration:"
+        echo "   Available CPU cores: $MAX_CORES"
+        echo "   Thread counts to test: $THREADS"
         echo "   Strategy: $STRATEGY (override with BENCH_STRATEGY=strategy-name)"
-        echo "   📊 CSV output and memory monitoring enabled"
-        echo ""
+        echo "   📊 CSV output and comprehensive memory monitoring"
+        echo "   🔧 Will test: bafiq view (+ samtools view + sambamba view if available)"
+        echo "   💡 Override threads: BENCH_THREADS=\"1,2,4,8,$MAX_CORES\" just bench-view"
+        echo "   💡 Use auto threads: BENCH_THREADS=\"auto\" just bench-view"
+        echo "   💡 Multiple BAMs: BAFIQ_SOURCE_BAMS=\"chr1.bam,x.bam\" just bench-view"
+        echo "   💡 Multiple flags: BAFIQ_FLAGS=\"0x4,0x2,0x10\" just bench-view"
+        echo "   💡 Custom flags: BAFIQ_FLAGS=\"0x100,0x200,0x400\" just bench-view"
+        
+        # Validate BAM files existence before starting
+        for bam_file in "${BAM_ARRAY[@]}"; do
+            if [ ! -f "$bam_file" ]; then
+                echo "❌ BAM file not found: $bam_file"
+                echo "   Please check the file path and permissions"
+                exit 1
+            fi
+        done
+        
+        echo "======================================================================================================"
         
         # Build bafiq first
-        echo "Building bafiq..."
+        echo "🔧 Building bafiq..."
         cargo build --release
         
-        # Create output directory for CSV files
+        # Create output directory for result files
         mkdir -p ./benchmark_results
-        COMBINED_CSV="./benchmark_results/view_benchmark_$(date +%Y%m%d_%H%M%S).csv"
-        MEMORY_CSV="./benchmark_results/view_memory_samples_$(date +%Y%m%d_%H%M%S).csv"
+        TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+        COMBINED_CSV="./benchmark_results/view_performance_${TIMESTAMP}.csv"
+        MEMORY_CSV="./benchmark_results/view_memory_samples_${TIMESTAMP}.csv"
         
-        # Initialize CSV headers (same format as bench command)
-        echo "threads,strategy,time_ms,peak_memory_mb,avg_memory_mb,peak_cpu_percent,avg_cpu_percent,index_size_mb,samples" > "$COMBINED_CSV"
-        echo "threads,strategy,timestamp_ms,memory_mb,cpu_percent" > "$MEMORY_CSV"
+        # Initialize CSV headers (updated with BAM file and flag columns)
+        echo "bam_file,flag,threads,strategy,time_ms,peak_memory_mb,avg_memory_mb,peak_cpu_percent,avg_cpu_percent,index_size_mb,samples,output_lines,reads_found" > "$COMBINED_CSV"
+        echo "bam_file,flag,threads,strategy,timestamp_ms,memory_mb,cpu_percent" > "$MEMORY_CSV"
         
         # Create temp directory for output files
         TEMP_DIR=$(mktemp -d)
         trap "rm -rf $TEMP_DIR" EXIT
         
-        # Check if samtools is available
-        if ! command -v samtools &> /dev/null; then
+        # Check tool availability
+        SAMTOOLS_AVAILABLE=false
+        SAMBAMBA_AVAILABLE=false
+        
+        if command -v samtools &> /dev/null; then
+            SAMTOOLS_AVAILABLE=true
+            SAMTOOLS_VERSION=$(samtools --version 2>/dev/null | head -1 | awk '{print $2}' || echo "unknown")
+            echo "✅ samtools found: version $SAMTOOLS_VERSION"
+        else
             echo "⚠️  samtools not found in PATH. Install with:"
             echo "   macOS: brew install samtools"
             echo "   Linux: sudo apt-get install samtools"
-            exit 1
+        fi
+        
+        if command -v sambamba &> /dev/null; then
+            SAMBAMBA_AVAILABLE=true
+            SAMBAMBA_VERSION=$(sambamba --version 2>/dev/null | head -1 | awk '{print $2}' || echo "unknown")
+            echo "✅ sambamba found: version $SAMBAMBA_VERSION"
+        else
+            SAMBAMBA_AVAILABLE=false
+            echo "ℹ️  sambamba not found in PATH (optional)"
+            echo "   Install for additional comparison:"
+            echo "   macOS: brew install sambamba"
+            echo "   Linux: Download from https://github.com/biod/sambamba/releases"
         fi
         
         # Allow strategy specification (default: work-stealing for best performance)
         STRATEGY="${BENCH_STRATEGY:-work-stealing}"
         
-        # Function to monitor memory usage (same as bench command)
+        # Function to monitor memory usage (updated with BAM file and flag columns)
         monitor_memory() {
             local pid=$1
             local strategy=$2
             local threads=$3
             local start_time=$4
+            local bam_file=$5
+            local flag=$6
             local memory_file=$(mktemp)
             
             while kill -0 $pid 2>/dev/null; do
@@ -569,9 +618,9 @@ bench-view:
                 # Get CPU usage (simplified)
                 cpu_percent=$(ps -o %cpu= -p $pid 2>/dev/null || echo "0.0")
                 
-                # Record sample
+                # Record sample to CSV
                 echo "$elapsed_ms,$memory_mb,$cpu_percent" >> "$memory_file"
-                echo "$threads,$strategy,$elapsed_ms,$memory_mb,$cpu_percent" >> "$MEMORY_CSV"
+                echo "$bam_file,$flag,$threads,$strategy,$elapsed_ms,$memory_mb,$cpu_percent" >> "$MEMORY_CSV"
                 
                 sleep 0.1  # Sample every 100ms
             done
@@ -579,170 +628,382 @@ bench-view:
             echo "$memory_file"
         }
         
-        # Convert "auto" to 0 for CSV consistency
-        CSV_THREADS="$THREADS"
-        if [ "$THREADS" = "auto" ]; then
-            CSV_THREADS="0"
+        # Benchmark strategies to test based on availability
+        STRATEGIES=()
+        if [ "$SAMTOOLS_AVAILABLE" = true ]; then
+            STRATEGIES+=("samtools-view")
         fi
-        
-        echo "🔧 Building index if needed..."
-        echo "   Strategy: $STRATEGY"
-        if [ "$THREADS" = "auto" ]; then
-            ./target/release/bafiq index "$BAFIQ_TEST_BAM" --strategy "$STRATEGY"
-        else
-            ./target/release/bafiq --threads "$THREADS" index "$BAFIQ_TEST_BAM" --strategy "$STRATEGY"
+        STRATEGIES+=("bafiq-view")
+        if [ "$SAMBAMBA_AVAILABLE" = true ]; then
+            STRATEGIES+=("sambamba-view")
         fi
         
         echo ""
-        echo "🏁 BENCHMARK: View unmapped reads (with monitoring)"
-        echo "================================================"
+        echo "🧪 Tools to benchmark: ${STRATEGIES[*]}"
+        if [ "$SAMTOOLS_AVAILABLE" = false ]; then
+            echo "   ⚠️  samtools will be skipped (not found)"
+        fi
+        if [ "$SAMBAMBA_AVAILABLE" = false ]; then
+            echo "   ℹ️  sambamba will be skipped (not found, optional)"
+        fi
+        echo ""
         
-        # Benchmark strategies to test
-        STRATEGIES=("samtools-view" "bafiq-view")
+        # Temporary file for collecting all results
+        TEMP_RESULTS=$(mktemp)
         
-        for strategy in "${STRATEGIES[@]}"; do
-            echo "Running $strategy..."
+        # Split comma-separated values for loops
+        IFS=',' read -ra THREAD_ARRAY <<< "$THREADS"
+        IFS=',' read -ra BAM_ARRAY <<< "$SOURCE_BAMS"
+        IFS=',' read -ra FLAG_ARRAY <<< "$FLAGS"
+        
+        # Nested loops for BAM files and flags
+        for bam_file in "${BAM_ARRAY[@]}"; do
+            echo "=========================="
+            echo "BAM FILE: $(basename "$bam_file")"
+            echo "=========================="
             
-            START_TIME=$(python3 -c "import time; print(int(time.time() * 1000))")
-            
-                         case "$strategy" in
-                 "samtools-view")
-                     if [ "$THREADS" = "auto" ]; then
-                         echo "   ⏱️  samtools view (auto threads, no -@ parameter)"
-                         samtools view -h -f 0x4 "$BAFIQ_TEST_BAM" > "$TEMP_DIR/out.samtools.sam" &
-                         BENCHMARK_PID=$!
-                     else
-                         SAMTOOLS_THREADS=$((THREADS - 1))
-                         if [ "$SAMTOOLS_THREADS" -lt 0 ]; then
-                             SAMTOOLS_THREADS=0
-                         fi
-                         echo "   ⏱️  samtools view (${THREADS} threads total, -@ ${SAMTOOLS_THREADS})"
-                         samtools view -@ "$SAMTOOLS_THREADS" -h -f 0x4 "$BAFIQ_TEST_BAM" > "$TEMP_DIR/out.samtools.sam" &
-                         BENCHMARK_PID=$!
-                     fi
-                     ;;
-                 "bafiq-view")
-                     if [ "$THREADS" = "auto" ]; then
-                         echo "   🚀 bafiq view (auto threads)"
-                         ./target/release/bafiq view --unmapped "$BAFIQ_TEST_BAM" > "$TEMP_DIR/out.bafiq.sam" &
-                         BENCHMARK_PID=$!
-                     else
-                         echo "   🚀 bafiq view (${THREADS} threads)"
-                         ./target/release/bafiq --threads "$THREADS" view --unmapped "$BAFIQ_TEST_BAM" > "$TEMP_DIR/out.bafiq.sam" &
-                         BENCHMARK_PID=$!
-                     fi
-                     ;;
-             esac
-            
-            # Start memory monitoring in background
-            MEMORY_FILE=$(monitor_memory $BENCHMARK_PID "$strategy" "$CSV_THREADS" "$START_TIME")
-            
-            # Wait for benchmark to complete
-            wait $BENCHMARK_PID
-            BENCHMARK_EXIT_CODE=$?
-            
-            END_TIME=$(python3 -c "import time; print(int(time.time() * 1000))")
-            DURATION=$((END_TIME - START_TIME))
-            DURATION_SEC=$(echo "scale=3; $DURATION / 1000" | bc -l 2>/dev/null || echo "0.000")
-            
-            if [ $BENCHMARK_EXIT_CODE -eq 0 ]; then
-                # Calculate memory stats from samples (same as bench command)
-                if [ -f "$MEMORY_FILE" ]; then
-                    PEAK_MEMORY=$(awk -F',' 'NR>1 && $2>max {max=$2} END {print max+0}' "$MEMORY_FILE" 2>/dev/null || echo "0.0")
-                    AVG_MEMORY=$(awk -F',' 'NR>1 {sum+=$2; count++} END {print (count>0 ? sum/count : 0)}' "$MEMORY_FILE" 2>/dev/null || echo "0.0")
-                    PEAK_CPU=$(awk -F',' 'NR>1 && $3>max {max=$3} END {print max+0}' "$MEMORY_FILE" 2>/dev/null || echo "0.0")
-                    AVG_CPU=$(awk -F',' 'NR>1 {sum+=$3; count++} END {print (count>0 ? sum/count : 0)}' "$MEMORY_FILE" 2>/dev/null || echo "0.0")
-                    SAMPLE_COUNT=$(wc -l < "$MEMORY_FILE" 2>/dev/null || echo "0")
-                else
-                    PEAK_MEMORY="0.0"
-                    AVG_MEMORY="0.0"
-                    PEAK_CPU="0.0"
-                    AVG_CPU="0.0"
-                    SAMPLE_COUNT="0"
-                fi
-                
-                PEAK_MEMORY_GB=$(echo "scale=1; $PEAK_MEMORY / 1024" | bc -l 2>/dev/null || echo "0.0")
-                
-                # No index size for view operations
-                INDEX_SIZE_MB="0.0"
-                
-                # Add to CSV (same format as bench command)
-                echo "$CSV_THREADS,$strategy,$DURATION,$PEAK_MEMORY,$AVG_MEMORY,$PEAK_CPU,$AVG_CPU,$INDEX_SIZE_MB,$SAMPLE_COUNT" >> "$COMBINED_CSV"
-                
-                echo "   Time: ${DURATION_SEC}s, Peak Memory: ${PEAK_MEMORY_GB}GB, Avg CPU: ${AVG_CPU}%"
-            else
-                echo "   ❌ FAILED"
+            # Validate BAM file exists
+            if [ ! -f "$bam_file" ]; then
+                echo "❌ BAM file not found: $bam_file"
+                continue
             fi
             
-            # Clean up memory file
-            rm -f "$MEMORY_FILE"
+            # Get BAM file size for reporting
+            BAM_SIZE=$(stat -f%z "$bam_file" 2>/dev/null || stat -c%s "$bam_file" 2>/dev/null || echo "0")
+            BAM_SIZE_GB=$(echo "scale=1; $BAM_SIZE / 1024 / 1024 / 1024" | bc -l 2>/dev/null || echo "0.0")
+            echo "BAM size: ${BAM_SIZE_GB} GB"
+            
+            for flag in "${FLAG_ARRAY[@]}"; do
+                echo "--------"
+                echo "FLAG: $flag"
+                echo "--------"
+                
+                for thread_count in "${THREAD_ARRAY[@]}"; do
+                    echo "Running with $thread_count threads..."
+                    
+                    # Convert "auto" to 0 for CSV consistency
+                    CSV_THREADS="$thread_count"
+                    if [ "$thread_count" = "auto" ]; then
+                        CSV_THREADS="0"
+                    fi
+                    
+                    # Clean up any existing index to ensure fresh build
+                    rm -f "${bam_file}.bfi"
+                    
+                    echo "🔧 Building index if needed..."
+                    echo "   Strategy: $STRATEGY"
+                    if [ "$thread_count" = "auto" ]; then
+                        ./target/release/bafiq index "$bam_file" --strategy "$STRATEGY"
+                    else
+                        ./target/release/bafiq --threads "$thread_count" index "$bam_file" --strategy "$STRATEGY"
+                    fi
+            
+                    echo ""
+                    echo "🏁 BENCHMARK: View flag $flag ($thread_count threads)"
+                    echo "========================================================="
+                    
+                    for strategy in "${STRATEGIES[@]}"; do
+                        echo "Running $strategy..."
+                        
+                        START_TIME=$(python3 -c "import time; print(int(time.time() * 1000))")
+                        
+                        case "$strategy" in
+                            "samtools-view")
+                                if [ "$thread_count" = "auto" ]; then
+                                    echo "   ⏱️  samtools view (auto threads, no -@ parameter)"
+                                    samtools view -h -f $flag "$bam_file" > "$TEMP_DIR/out.samtools.${thread_count}t.${flag}.sam" &
+                                    BENCHMARK_PID=$!
+                                else
+                                    SAMTOOLS_THREADS=$((thread_count - 1))
+                                    if [ "$SAMTOOLS_THREADS" -lt 0 ]; then
+                                        SAMTOOLS_THREADS=0
+                                    fi
+                                    echo "   ⏱️  samtools view (${thread_count} threads total, -@ ${SAMTOOLS_THREADS})"
+                                    samtools view -@ "$SAMTOOLS_THREADS" -h -f $flag "$bam_file" > "$TEMP_DIR/out.samtools.${thread_count}t.${flag}.sam" &
+                                    BENCHMARK_PID=$!
+                                fi
+                                ;;
+                            "bafiq-view")
+                                if [ "$thread_count" = "auto" ]; then
+                                    echo "   🚀 bafiq view (auto threads)"
+                                    ./target/release/bafiq view -f $flag "$bam_file" > "$TEMP_DIR/out.bafiq.${thread_count}t.${flag}.sam" &
+                                    BENCHMARK_PID=$!
+                                else
+                                    echo "   🚀 bafiq view (${thread_count} threads)"
+                                    ./target/release/bafiq --threads "$thread_count" view -f $flag "$bam_file" > "$TEMP_DIR/out.bafiq.${thread_count}t.${flag}.sam" &
+                                    BENCHMARK_PID=$!
+                                fi
+                                ;;
+                            "sambamba-view")
+                                if [ "$thread_count" = "auto" ]; then
+                                    echo "   🔧 sambamba view (auto threads)"
+                                    sambamba view -h -f "flag & $flag != 0" "$bam_file" > "$TEMP_DIR/out.sambamba.${thread_count}t.${flag}.sam" &
+                                    BENCHMARK_PID=$!
+                                else
+                                    echo "   🔧 sambamba view (${thread_count} threads)"
+                                    sambamba view -t "$thread_count" -h -f "flag & $flag != 0" "$bam_file" > "$TEMP_DIR/out.sambamba.${thread_count}t.${flag}.sam" &
+                                    BENCHMARK_PID=$!
+                                fi
+                                ;;
+                        esac
+                        
+                        # Start memory monitoring in background
+                        MEMORY_FILE=$(monitor_memory $BENCHMARK_PID "$strategy" "$CSV_THREADS" "$START_TIME" "$(basename "$bam_file")" "$flag")
+                
+                # Wait for benchmark to complete
+                wait $BENCHMARK_PID
+                BENCHMARK_EXIT_CODE=$?
+                
+                END_TIME=$(python3 -c "import time; print(int(time.time() * 1000))")
+                DURATION=$((END_TIME - START_TIME))
+                DURATION_SEC=$(echo "scale=3; $DURATION / 1000" | bc -l 2>/dev/null || echo "0.000")
+                
+                if [ $BENCHMARK_EXIT_CODE -eq 0 ]; then
+                    # Calculate memory stats from samples
+                    if [ -f "$MEMORY_FILE" ]; then
+                        PEAK_MEMORY=$(awk -F',' 'NR>1 && $2>max {max=$2} END {print max+0}' "$MEMORY_FILE" 2>/dev/null || echo "0.0")
+                        AVG_MEMORY=$(awk -F',' 'NR>1 {sum+=$2; count++} END {print (count>0 ? sum/count : 0)}' "$MEMORY_FILE" 2>/dev/null || echo "0.0")
+                        PEAK_CPU=$(awk -F',' 'NR>1 && $3>max {max=$3} END {print max+0}' "$MEMORY_FILE" 2>/dev/null || echo "0.0")
+                        AVG_CPU=$(awk -F',' 'NR>1 {sum+=$3; count++} END {print (count>0 ? sum/count : 0)}' "$MEMORY_FILE" 2>/dev/null || echo "0.0")
+                        SAMPLE_COUNT=$(wc -l < "$MEMORY_FILE" 2>/dev/null || echo "0")
+                    else
+                        PEAK_MEMORY="0.0"
+                        AVG_MEMORY="0.0"
+                        PEAK_CPU="0.0"
+                        AVG_CPU="0.0"
+                        SAMPLE_COUNT="0"
+                    fi
+                    
+                    PEAK_MEMORY_GB=$(echo "scale=1; $PEAK_MEMORY / 1024" | bc -l 2>/dev/null || echo "0.0")
+                    
+                        # Count output lines and reads
+                        case "$strategy" in
+                            "samtools-view")
+                                OUTPUT_LINES=$(wc -l < "$TEMP_DIR/out.samtools.${thread_count}t.${flag}.sam" 2>/dev/null || echo "0")
+                                READS_FOUND=$(grep -v "^@" "$TEMP_DIR/out.samtools.${thread_count}t.${flag}.sam" 2>/dev/null | wc -l || echo "0")
+                                ;;
+                            "bafiq-view")
+                                OUTPUT_LINES=$(wc -l < "$TEMP_DIR/out.bafiq.${thread_count}t.${flag}.sam" 2>/dev/null || echo "0")
+                                READS_FOUND=$(grep -v "^@" "$TEMP_DIR/out.bafiq.${thread_count}t.${flag}.sam" 2>/dev/null | wc -l || echo "0")
+                                ;;
+                            "sambamba-view")
+                                OUTPUT_LINES=$(wc -l < "$TEMP_DIR/out.sambamba.${thread_count}t.${flag}.sam" 2>/dev/null || echo "0")
+                                READS_FOUND=$(grep -v "^@" "$TEMP_DIR/out.sambamba.${thread_count}t.${flag}.sam" 2>/dev/null | wc -l || echo "0")
+                                ;;
+                        esac
+                        
+                        # No index size for view operations
+                        INDEX_SIZE_MB="0.0"
+                        
+                        # Add to CSV with additional metrics (include BAM file and flag)
+                        echo "$(basename "$bam_file"),$flag,$CSV_THREADS,$strategy,$DURATION,$PEAK_MEMORY,$AVG_MEMORY,$PEAK_CPU,$AVG_CPU,$INDEX_SIZE_MB,$SAMPLE_COUNT,$OUTPUT_LINES,$READS_FOUND" >> "$COMBINED_CSV"
+                        
+                        # Store result for summary
+                        echo "$(basename "$bam_file"),$flag,$CSV_THREADS,$strategy,$DURATION_SEC,$PEAK_MEMORY_GB,$AVG_MEMORY,$PEAK_CPU,$AVG_CPU,$INDEX_SIZE_MB,$OUTPUT_LINES,$READS_FOUND" >> "$TEMP_RESULTS"
+                    
+                    echo "   Time: ${DURATION_SEC}s, Peak Memory: ${PEAK_MEMORY_GB}GB, Avg CPU: ${AVG_CPU}%, Reads: $READS_FOUND"
+                else
+                    echo "   ❌ FAILED"
+                fi
+                
+                                        # Clean up memory file
+                        rm -f "$MEMORY_FILE"
+                        echo ""
+                    done
+                    echo ""
+                done
+                echo ""
+            done
             echo ""
         done
         
-                 # Verification and comparison (same as before)
-         SAMTOOLS_COUNT=$(wc -l < "$TEMP_DIR/out.samtools.sam" 2>/dev/null || echo "0")
-         SAMTOOLS_READS=$(grep -v "^@" "$TEMP_DIR/out.samtools.sam" 2>/dev/null | wc -l || echo "0")
-         BAFIQ_COUNT=$(wc -l < "$TEMP_DIR/out.bafiq.sam" 2>/dev/null || echo "0")
-         BAFIQ_READS=$(grep -v "^@" "$TEMP_DIR/out.bafiq.sam" 2>/dev/null | wc -l || echo "0")
+        # Comprehensive verification and comparison
+        echo ""
+        echo "📊 COMPREHENSIVE RESULTS SUMMARY:"
+        echo "=================================================================="
         
-                 echo "📊 RESULTS SUMMARY:"
-         echo "================================================"
-         if [ "$SAMTOOLS_READS" -eq "$BAFIQ_READS" ]; then
-             echo "✅ Output verification: PASSED ($SAMTOOLS_READS reads)"
-             echo "   Both tools found identical number of reads"
-         else
-             echo "❌ Output verification: FAILED"
-             echo "   samtools: $SAMTOOLS_READS reads"
-             echo "   bafiq: $BAFIQ_READS reads"
-         fi
+        # Verification across all tools (check consistency across BAM files, flags, and thread counts)
+        echo "📋 Output Verification (by BAM file, flag, and thread count):"
         
-        # Performance comparison
+        ALL_MATCH=true
+        for bam_file in "${BAM_ARRAY[@]}"; do
+            echo "   BAM: $(basename "$bam_file")"
+            for flag in "${FLAG_ARRAY[@]}"; do
+                echo "     Flag: $flag"
+                for thread_count in "${THREAD_ARRAY[@]}"; do
+                    SAMTOOLS_READS=0
+                    BAFIQ_READS=0
+                    SAMBAMBA_READS=0
+                    
+                    if [ -f "$TEMP_DIR/out.samtools.${thread_count}t.${flag}.sam" ]; then
+                        SAMTOOLS_READS=$(grep -v "^@" "$TEMP_DIR/out.samtools.${thread_count}t.${flag}.sam" 2>/dev/null | wc -l || echo "0")
+                    fi
+                    if [ -f "$TEMP_DIR/out.bafiq.${thread_count}t.${flag}.sam" ]; then
+                        BAFIQ_READS=$(grep -v "^@" "$TEMP_DIR/out.bafiq.${thread_count}t.${flag}.sam" 2>/dev/null | wc -l || echo "0")
+                    fi
+                    if [ -f "$TEMP_DIR/out.sambamba.${thread_count}t.${flag}.sam" ]; then
+                        SAMBAMBA_READS=$(grep -v "^@" "$TEMP_DIR/out.sambamba.${thread_count}t.${flag}.sam" 2>/dev/null | wc -l || echo "0")
+                    fi
+                    
+                    echo "       $thread_count threads: samtools=$SAMTOOLS_READS, bafiq=$BAFIQ_READS"
+                    if [ "$SAMBAMBA_AVAILABLE" = true ]; then
+                        echo "                         sambamba=$SAMBAMBA_READS"
+                    fi
+                    
+                    # Check consistency for this combination
+                    if [ "$SAMTOOLS_AVAILABLE" = true ] && [ "$BAFIQ_READS" -ne "$SAMTOOLS_READS" ]; then
+                        ALL_MATCH=false
+                    fi
+                    if [ "$SAMBAMBA_AVAILABLE" = true ] && [ "$SAMBAMBA_READS" -ne "$BAFIQ_READS" ]; then
+                        ALL_MATCH=false
+                    fi
+                done
+            done
+        done
+        
+        if [ "$ALL_MATCH" = true ]; then
+            echo "✅ All available tools found identical number of reads across all combinations"
+        else
+            echo "❌ Read counts differ between tools or configurations"
+        fi
+        
+        # Performance ranking and analysis
         echo ""
         echo "🏆 Performance Ranking:"
-        FASTEST_STRATEGIES=$(tail -n +2 "$COMBINED_CSV" | sort -t, -k3 -n | head -3)
-        echo "$FASTEST_STRATEGIES" | head -1 | awk -F',' '{printf "   1. %s - %.3fs", $2, $3/1000}'
-        SAMTOOLS_TIME=$(tail -n +2 "$COMBINED_CSV" | grep ",samtools-view," | awk -F',' '{print $3}')
-        if [ -n "$SAMTOOLS_TIME" ]; then
-            echo "$FASTEST_STRATEGIES" | head -1 | awk -F',' -v samtools_ms="$SAMTOOLS_TIME" '{printf " (%.1fx faster than samtools)\n", samtools_ms/$3}'
-        else
-            echo ""
-        fi
-        echo "$FASTEST_STRATEGIES" | sed -n '2p' | awk -F',' '{printf "   2. %s - %.3fs", $2, $3/1000}'
-        if [ -n "$SAMTOOLS_TIME" ]; then
-            echo "$FASTEST_STRATEGIES" | sed -n '2p' | awk -F',' -v samtools_ms="$SAMTOOLS_TIME" '{printf " (%.1fx faster than samtools)\n", samtools_ms/$3}'
-        else
-            echo ""
-        fi
-        echo "$FASTEST_STRATEGIES" | sed -n '3p' | awk -F',' '{printf "   3. %s - %.3fs", $2, $3/1000}'
-        if [ -n "$SAMTOOLS_TIME" ]; then
-            echo "$FASTEST_STRATEGIES" | sed -n '3p' | awk -F',' -v samtools_ms="$SAMTOOLS_TIME" '{printf " (%.1fx faster than samtools)\n", samtools_ms/$3}'
-        else
-            echo ""
+        echo "----------------------------------------------------------------"
+        printf "%-20s %-15s %-10s %-10s %-10s %-10s %-10s %-10s\n" "BAM File" "Flag" "Threads" "Tool" "Time" "Peak RAM" "Avg RAM" "Peak CPU"
+        echo "----------------------------------------------------------------"
+        
+        while IFS=',' read -r bam_file flag threads strategy time_sec peak_mem_gb avg_mem_mb peak_cpu avg_cpu index_size_mb output_lines reads_found; do
+            AVG_MEM_GB=$(echo "scale=1; $avg_mem_mb / 1024" | bc -l 2>/dev/null || echo "0.0")
+            printf "%-20s %-15s %-10s %-10s %-10s %-10s %-10s %-10s\n" \
+                "$bam_file" "$flag" "$threads" "$strategy" "${time_sec}s" "${peak_mem_gb}GB" "${AVG_MEM_GB}GB" "${peak_cpu}%"
+        done < "$TEMP_RESULTS"
+        
+        echo "=================================================================="
+        
+        # Thread Scaling Analysis (updated for multi-dimensional data)
+        echo ""
+        echo "🧵 Thread Scaling Analysis:"
+        for thread_count in "${THREAD_ARRAY[@]}"; do
+            echo "   $thread_count thread(s):"
+            # Use CSV thread value (0 for auto)
+            CSV_THREAD_LOOKUP="$thread_count"
+            if [ "$thread_count" = "auto" ]; then
+                CSV_THREAD_LOOKUP="0"
+            fi
+            BEST_FOR_THREADS=$(grep ",$CSV_THREAD_LOOKUP," "$COMBINED_CSV" | sort -t, -k5 -n | head -1)
+            if [ -n "$BEST_FOR_THREADS" ]; then
+                BEST_BAM=$(echo "$BEST_FOR_THREADS" | cut -d, -f1)
+                BEST_FLAG=$(echo "$BEST_FOR_THREADS" | cut -d, -f2)
+                BEST_STRATEGY=$(echo "$BEST_FOR_THREADS" | cut -d, -f4)
+                BEST_TIME=$(echo "$BEST_FOR_THREADS" | cut -d, -f5)
+                BEST_TIME_SEC=$(echo "scale=3; $BEST_TIME / 1000" | bc -l 2>/dev/null || echo "0.000")
+                echo "     Best: $BEST_STRATEGY ($BEST_BAM, $BEST_FLAG) - ${BEST_TIME_SEC}s"
+            fi
+        done
+        
+        # Speed comparison analysis
+        echo ""
+        echo "🚀 Speed Analysis:"
+        FASTEST_OVERALL=$(tail -n +2 "$COMBINED_CSV" | sort -t, -k5 -n | head -1)
+        if [ -n "$FASTEST_OVERALL" ]; then
+            FASTEST_BAM=$(echo "$FASTEST_OVERALL" | cut -d, -f1)
+            FASTEST_FLAG=$(echo "$FASTEST_OVERALL" | cut -d, -f2)
+            FASTEST_THREADS_CSV=$(echo "$FASTEST_OVERALL" | cut -d, -f3)
+            FASTEST_STRATEGY=$(echo "$FASTEST_OVERALL" | cut -d, -f4)
+            FASTEST_TIME=$(echo "$FASTEST_OVERALL" | cut -d, -f5)
+            FASTEST_TIME_SEC=$(echo "scale=3; $FASTEST_TIME / 1000" | bc -l 2>/dev/null || echo "0.000")
+            
+            # Convert 0 back to "auto" for display
+            FASTEST_THREADS_DISPLAY="$FASTEST_THREADS_CSV"
+            if [ "$FASTEST_THREADS_CSV" = "0" ]; then
+                FASTEST_THREADS_DISPLAY="auto"
+            fi
+            
+            echo "   Fastest overall: $FASTEST_STRATEGY ($FASTEST_BAM, $FASTEST_FLAG, ${FASTEST_THREADS_DISPLAY} threads) - ${FASTEST_TIME_SEC}s"
+            
+            # Speed comparison with samtools baseline
+            if [ "$SAMTOOLS_AVAILABLE" = true ]; then
+                SAMTOOLS_TIME=$(tail -n +2 "$COMBINED_CSV" | grep ",samtools-view," | awk -F',' '{print $5}')
+                if [ -n "$SAMTOOLS_TIME" ] && [ "$SAMTOOLS_TIME" -ne "$FASTEST_TIME" ]; then
+                    SPEEDUP=$(echo "scale=1; $SAMTOOLS_TIME / $FASTEST_TIME" | bc -l 2>/dev/null || echo "1.0")
+                    echo "   Speedup vs samtools: ${SPEEDUP}x faster"
+                fi
+            fi
         fi
         
-        # Quick content comparison (first 10 lines)
+        # Memory efficiency analysis
         echo ""
-        echo "🔍 Content comparison (first 10 lines):"
-        if head -10 "$TEMP_DIR/out.samtools.sam" 2>/dev/null | diff - <(head -10 "$TEMP_DIR/out.bafiq.sam" 2>/dev/null) > /dev/null 2>&1; then
-            echo "✅ Content sample matches"
+        echo "💾 Memory Analysis:"
+        MOST_EFFICIENT=$(tail -n +2 "$COMBINED_CSV" | sort -t, -k6 -n | head -1)
+        if [ -n "$MOST_EFFICIENT" ]; then
+            EFFICIENT_BAM=$(echo "$MOST_EFFICIENT" | cut -d, -f1)
+            EFFICIENT_FLAG=$(echo "$MOST_EFFICIENT" | cut -d, -f2)
+            EFFICIENT_STRATEGY=$(echo "$MOST_EFFICIENT" | cut -d, -f4)
+            EFFICIENT_MEM=$(echo "$MOST_EFFICIENT" | cut -d, -f6)
+            EFFICIENT_MEM_GB=$(echo "scale=1; $EFFICIENT_MEM / 1024" | bc -l 2>/dev/null || echo "0.0")
+            echo "   Most memory efficient: $EFFICIENT_STRATEGY ($EFFICIENT_BAM, $EFFICIENT_FLAG) - ${EFFICIENT_MEM_GB}GB peak"
+        fi
+        
+        # Content comparison across tools (check first combinations as reference)
+        echo ""
+        echo "🔍 Content Verification:"
+        CONTENT_MATCH=true
+        FIRST_THREAD="${THREAD_ARRAY[0]}"
+        FIRST_BAM="${BAM_ARRAY[0]}"
+        FIRST_FLAG="${FLAG_ARRAY[0]}"
+        
+        if [ -f "$TEMP_DIR/out.samtools.${FIRST_THREAD}t.${FIRST_FLAG}.sam" ] && [ -f "$TEMP_DIR/out.bafiq.${FIRST_THREAD}t.${FIRST_FLAG}.sam" ]; then
+            if ! head -20 "$TEMP_DIR/out.samtools.${FIRST_THREAD}t.${FIRST_FLAG}.sam" | diff - <(head -20 "$TEMP_DIR/out.bafiq.${FIRST_THREAD}t.${FIRST_FLAG}.sam") > /dev/null 2>&1; then
+                CONTENT_MATCH=false
+            fi
+        fi
+        if [ -f "$TEMP_DIR/out.sambamba.${FIRST_THREAD}t.${FIRST_FLAG}.sam" ] && [ -f "$TEMP_DIR/out.bafiq.${FIRST_THREAD}t.${FIRST_FLAG}.sam" ]; then
+            if ! head -20 "$TEMP_DIR/out.sambamba.${FIRST_THREAD}t.${FIRST_FLAG}.sam" | diff - <(head -20 "$TEMP_DIR/out.bafiq.${FIRST_THREAD}t.${FIRST_FLAG}.sam") > /dev/null 2>&1; then
+                CONTENT_MATCH=false
+            fi
+        fi
+        
+        if [ "$CONTENT_MATCH" = true ]; then
+            echo "✅ Content samples match across all available tools (checked $(basename "$FIRST_BAM"), $FIRST_FLAG, $FIRST_THREAD threads)"
         else
-            echo "❌ Content sample differs"
-            echo "   Run 'diff $TEMP_DIR/out.samtools.sam $TEMP_DIR/out.bafiq.sam' for details"
+            echo "❌ Content differs between available tools (checked $(basename "$FIRST_BAM"), $FIRST_FLAG, $FIRST_THREAD threads)"
+            echo "   Manual inspection recommended"
         fi
         
         echo ""
-        echo "📊 Results saved to:"
+        echo "📊 VIEW BENCHMARK RESULTS SAVED:"
         echo "   Performance CSV: $COMBINED_CSV"
         echo "   Memory samples CSV: $MEMORY_CSV"
-                 echo "📁 Output files saved to: $TEMP_DIR"
-         echo "   samtools: $TEMP_DIR/out.samtools.sam"
-         echo "   bafiq: $TEMP_DIR/out.bafiq.sam"
+        echo "📁 Output files saved to: $TEMP_DIR"
+        for bam_file in "${BAM_ARRAY[@]}"; do
+            echo "   BAM: $(basename "$bam_file")"
+            for flag in "${FLAG_ARRAY[@]}"; do
+                echo "     Flag: $flag"
+                for thread_count in "${THREAD_ARRAY[@]}"; do
+                    echo "       $thread_count threads:"
+                    if [ -f "$TEMP_DIR/out.samtools.${thread_count}t.${flag}.sam" ]; then
+                        echo "         samtools: out.samtools.${thread_count}t.${flag}.sam"
+                    fi
+                    if [ -f "$TEMP_DIR/out.bafiq.${thread_count}t.${flag}.sam" ]; then
+                        echo "         bafiq: out.bafiq.${thread_count}t.${flag}.sam"
+                    fi
+                    if [ -f "$TEMP_DIR/out.sambamba.${thread_count}t.${flag}.sam" ]; then
+                        echo "         sambamba: out.sambamba.${thread_count}t.${flag}.sam"
+                    fi
+                done
+            done
+        done
+        
+        # Clean up temporary files
+        rm -f "$TEMP_RESULTS"
         
         # Keep temp directory for manual inspection
         trap - EXIT
         echo "   (Directory preserved for manual inspection)"
         echo ""
-        echo "💡 Use the CSV files with plotting tools (same format as 'just bench')"
+        echo "💡 Use CSV files with plotting tools (same format as 'just bench')"
     fi
 
 
