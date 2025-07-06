@@ -59,7 +59,7 @@ bench:
         echo "threads,strategy,timestamp_ms,memory_mb,cpu_percent" > "$MEMORY_CSV"
         
         # Strategies to test (core strategies and reference tools)
-        STRATEGIES=("memory-friendly" "parallel-streaming" "rayon-wait-free" "bafiq-fast-count" "samtools")
+        STRATEGIES=("constant-memory" "parallel-streaming" "rayon-wait-free" "bafiq-fast-count" "samtools")
         
         # Temporary file for collecting all results
         TEMP_RESULTS=$(mktemp)
@@ -333,14 +333,14 @@ bench:
         }
         
         # Generate plots for interesting strategies
-        PLOT_STRATEGIES=("memory-friendly" "rayon-wait-free" "parallel-streaming" "bafiq-fast-count")
+        PLOT_STRATEGIES=("constant-memory" "rayon-wait-free" "parallel-streaming" "bafiq-fast-count")
         for strategy in "${PLOT_STRATEGIES[@]}"; do
             for thread_count in "${THREAD_ARRAY[@]}"; do
                 generate_ascii_plot "$strategy" "$thread_count"
             done
         done
         
-            echo "💡 Tip: memory-friendly should show more controlled memory usage compared to others"
+            echo "💡 Tip: constant-memory should show more controlled memory usage compared to others"
             echo "     Set MEM_PLOTS=1 to see detailed ASCII memory timeline plots"
             echo ""
         else
