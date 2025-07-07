@@ -10,7 +10,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 use sysinfo::{Pid, System};
 
-use bafiq::{benchmark, BuildStrategy, FlagIndex, IndexBuilder};
+use bafiq::{BuildStrategy, FlagIndex, IndexBuilder};
 
 /// Global storage for resource usage data from Criterion benchmarks
 static CRITERION_RESOURCE_DATA: LazyLock<Mutex<HashMap<String, ResourceStats>>> =
@@ -78,7 +78,7 @@ fn report_criterion_resource_usage() {
                 .collect();
             cpu_ranking.sort_by(|(_, cpu_a), (_, cpu_b)| cpu_b.partial_cmp(cpu_a).unwrap());
 
-            println!("\n🖥️ CPU Utilization (Criterion):");
+            println!("\nCPU Utilization (Criterion):");
             for (i, (name, cpu)) in cpu_ranking.iter().take(3).enumerate() {
                 println!("   {}. {} - {:.1}% average", i + 1, name, cpu);
             }
@@ -516,7 +516,7 @@ fn simple_benchmarks() -> Result<()> {
 
     // Export CSV timelines if requested
     if let Ok(csv_dir) = env::var("BAFIQ_EXPORT_CSV") {
-        println!("\n📊 Exporting timeline CSV files to: {}", csv_dir);
+        println!("\nExporting timeline CSV files to: {}", csv_dir);
         std::fs::create_dir_all(&csv_dir)?;
 
         for (name, result) in &results {
@@ -576,7 +576,7 @@ fn simple_benchmarks() -> Result<()> {
     println!("{}", "=".repeat(120));
 
     // ASCII Memory Usage Plots
-    println!("\n📊 Memory Usage Timeline (ASCII Plots):");
+    println!("\nMemory Usage Timeline (ASCII Plots):");
     println!("{}", "=".repeat(60));
 
     // Show memory plots for key strategies (limit to avoid overwhelming output)
@@ -795,7 +795,7 @@ impl ResourceStats {
         }
 
         println!(
-            "📊 Exported timeline CSV: {} ({} samples)",
+            "Exported timeline CSV: {} ({} samples)",
             output_path,
             self.timeline_samples.len()
         );
@@ -1086,7 +1086,7 @@ fn main() {
     // Check if we should run Criterion benchmarks or simple benchmarks
     if env::var("BAFIQ_USE_CRITERION").is_ok() {
         // Run full Criterion benchmarks (slower, statistical analysis)
-        println!("🔬 Running Criterion benchmarks (full statistical analysis)...");
+        println!("Running Criterion benchmarks (full statistical analysis)...");
         let mut criterion = Criterion::default()
             .warm_up_time(Duration::from_secs(1))
             .measurement_time(Duration::from_secs(10))

@@ -254,7 +254,7 @@ bench:
         
         # Generate ASCII memory plots (optional, enable with MEM_PLOTS=1)
         if [ "${MEM_PLOTS:-0}" = "1" ]; then
-            echo "📊 Memory Usage Timeline (ASCII Plots):"
+            echo "Memory Usage Timeline (ASCII Plots):"
             echo "============================================================"
         
         generate_ascii_plot() {
@@ -431,7 +431,7 @@ bench:
         fi
         echo ""
         
-        echo "🖥️  CPU Utilization Analysis:"
+        echo " CPU Utilization Analysis:"
         echo "   Best CPU utilization:"
         BEST_CPU=$(tail -n +2 "$COMBINED_CSV" | sort -t, -k7 -nr | head -3)
         echo "$BEST_CPU" | head -1 | awk -F',' '{printf "   1. %s (%st) - %.1f%% average CPU\n", $2, $1, $7}'
@@ -453,7 +453,7 @@ bench:
         fi
         echo ""
         
-        echo "📊 Results saved to: $COMBINED_CSV"
+        echo "Results saved to: $COMBINED_CSV"
         echo "📈 Detailed memory samples saved to: $MEMORY_CSV"
         echo ""
         echo "💡 Tip: Use the detailed memory CSV to reconstruct memory usage over time"
@@ -525,7 +525,7 @@ bench-view:
         echo "   Available CPU cores: $MAX_CORES"
         echo "   Thread counts to test: $THREADS"
         echo "   Strategy: $STRATEGY (override with BENCH_STRATEGY=strategy-name)"
-        echo "   📊 CSV output and comprehensive memory monitoring"
+        echo "   CSV output and comprehensive memory monitoring"
         echo "   🔧 Will test: bafiq view (+ samtools view + sambamba view if available)"
         echo "   💡 Override threads: BENCH_THREADS=\"1,2,4,8,$MAX_CORES\" just bench-view"
         echo "   💡 Use auto threads: BENCH_THREADS=\"auto\" just bench-view"
@@ -873,7 +873,7 @@ bench-view:
         
         # Comprehensive verification and comparison
         echo ""
-        echo "📊 COMPREHENSIVE RESULTS SUMMARY:"
+        echo "COMPREHENSIVE RESULTS SUMMARY:"
         echo "=================================================================="
         
         # Verification across all tools (check consistency across BAM files, flags, and thread counts)
@@ -1074,7 +1074,7 @@ bench-view:
         fi
         
         echo ""
-        echo "📊 VIEW BENCHMARK RESULTS SAVED:"
+        echo "VIEW BENCHMARK RESULTS SAVED:"
         echo "   Performance CSV: $COMBINED_CSV"
         echo "   Memory samples CSV: $MEMORY_CSV"
         echo "📁 Output files saved to: $TEMP_DIR"

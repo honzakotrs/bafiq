@@ -116,7 +116,7 @@ impl IndexingStrategy for ConstantMemoryStrategy {
             // **RELAXED MEMORY MONITORING**
             if chunk_count % MEMORY_CHECK_INTERVAL == 0 {
                 if let Some(current_rss_mb) = get_current_memory_usage_mb() {
-                    println!("📊 Memory check: {}MB (should be constant)", current_rss_mb);
+                    println!("Memory check: {}MB (should be constant)", current_rss_mb);
                 }
             }
             
