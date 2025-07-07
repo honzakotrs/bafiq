@@ -590,7 +590,7 @@ fn simple_benchmarks() -> Result<()> {
     }
 
     // Show comparison hint
-    println!("💡 Tip: memory_friendly should show more controlled memory usage compared to others");
+    println!("Tip: memory_friendly should show more controlled memory usage compared to others");
     println!("     Run 'just bench-csv' to export detailed CSV data for plotting");
     println!();
 

@@ -4,7 +4,9 @@ use rayon::ThreadPoolBuilder;
 use rust_htslib::bam::{Format, Read as BamRead, Writer};
 use std::path::{Path, PathBuf};
 
-use bafiq::{BuildStrategy, IndexBuilder, IndexManager, SerializableIndex};
+use bafiq::{
+    view::fast_count::scan_count, BuildStrategy, IndexBuilder, IndexManager, SerializableIndex,
+};
 
 /// CLI-friendly strategy names that map to BuildStrategy
 #[derive(Debug, Clone, ValueEnum)]
@@ -580,8 +582,7 @@ fn cmd_fast_count(input: PathBuf, flags: FlagFilter, threads: Option<usize>) -> 
     eprintln!("   Forbidden flags: 0x{:x}", forbidden_flags);
 
     let start = std::time::Instant::now();
-    let count =
-        IndexBuilder::new().scan_count(input_str, required_flags, forbidden_flags, threads)?;
+    let count = scan_count(input_str, required_flags, forbidden_flags, threads)?;
     let scan_time = start.elapsed();
 
     println!("{}", count);
