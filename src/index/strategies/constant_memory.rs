@@ -5,8 +5,9 @@ use std::io::{Read, Seek, SeekFrom};
 use rayon::prelude::*;
 
 use super::shared::{extract_flags_from_block_pooled, is_gzip_header};
-use super::{IndexingStrategy, BGZF_BLOCK_MAX_SIZE, BGZF_HEADER_SIZE, BGZF_FOOTER_SIZE};
+use super::{IndexingStrategy};
 use crate::FlagIndex;
+use crate::bgzf::{BGZF_BLOCK_MAX_SIZE, BGZF_FOOTER_SIZE, BGZF_HEADER_SIZE};
 
 /// Information about a BGZF block's location in the file
 #[derive(Debug, Clone)]

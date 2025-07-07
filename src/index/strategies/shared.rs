@@ -1,4 +1,5 @@
-use super::{BlockInfo, BGZF_BLOCK_MAX_SIZE, BGZF_FOOTER_SIZE, BGZF_HEADER_SIZE};
+use super::BlockInfo;
+use crate::bgzf::{BGZF_BLOCK_MAX_SIZE, BGZF_FOOTER_SIZE, BGZF_HEADER_SIZE};
 use crate::FlagIndex;
 use anyhow::{anyhow, Result};
 use libdeflater::Decompressor;
