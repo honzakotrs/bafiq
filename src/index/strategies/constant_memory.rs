@@ -171,7 +171,7 @@ fn discover_complete_blocks_in_chunk(
         let bsize = u16::from_le_bytes([header[16], header[17]]) as usize;
         let total_size = bsize + 1;
         
-        if total_size < BGZF_HEADER_SIZE + BGZF_FOOTER_SIZE || total_size > 65536 {
+        if total_size < BGZF_HEADER_SIZE + BGZF_FOOTER_SIZE || total_size > BGZF_BLOCK_MAX_SIZE {
             pos += 1;
             continue;
         }

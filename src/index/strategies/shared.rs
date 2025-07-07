@@ -123,7 +123,7 @@ pub fn discover_blocks_fast(data: &[u8]) -> Result<Vec<BlockInfo>> {
         let bsize = u16::from_le_bytes([header[16], header[17]]) as usize;
         let total_size = bsize + 1;
 
-        if total_size < BGZF_HEADER_SIZE + BGZF_FOOTER_SIZE || total_size > 65536 {
+        if total_size < BGZF_HEADER_SIZE + BGZF_FOOTER_SIZE || total_size > BGZF_BLOCK_MAX_SIZE {
             return Err(anyhow!("Invalid BGZF block size: {}", total_size));
         }
 

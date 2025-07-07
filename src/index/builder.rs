@@ -1,4 +1,4 @@
-use crate::bgzf::{BGZF_FOOTER_SIZE, BGZF_HEADER_SIZE};
+use crate::bgzf::{BGZF_BLOCK_MAX_SIZE, BGZF_FOOTER_SIZE, BGZF_HEADER_SIZE};
 use crate::FlagIndex;
 use anyhow::{anyhow, Result};
 use crossbeam::channel::unbounded;
@@ -141,7 +141,9 @@ impl IndexBuilder {
                 let total_size = bsize + 1;
 
                 // Validate block size
-                if total_size < BGZF_HEADER_SIZE + BGZF_FOOTER_SIZE || total_size > 65536 {
+                if total_size < BGZF_HEADER_SIZE + BGZF_FOOTER_SIZE
+                    || total_size > BGZF_BLOCK_MAX_SIZE
+                {
                     return Err(anyhow!("Invalid BGZF block size: {}", total_size));
                 }
 

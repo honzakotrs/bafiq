@@ -16,9 +16,7 @@ use std::ptr;
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 
-const BGZF_BLOCK_MAX_SIZE: usize = 65536;
-const BGZF_HEADER_SIZE: usize = 18;
-const BGZF_FOOTER_SIZE: usize = 8;
+use crate::bgzf::{BGZF_BLOCK_MAX_SIZE, BGZF_FOOTER_SIZE, BGZF_HEADER_SIZE};
 
 /// Information about a BGZF block's location in the file
 #[derive(Debug, Clone)]
@@ -49,7 +47,7 @@ fn discover_all_blocks(data: &[u8]) -> Result<Vec<BlockInfo>> {
         let total_size = bsize + 1;
 
         // Validate block size
-        if total_size < BGZF_HEADER_SIZE + BGZF_FOOTER_SIZE || total_size > 65536 {
+        if total_size < BGZF_HEADER_SIZE + BGZF_FOOTER_SIZE || total_size > BGZF_BLOCK_MAX_SIZE {
             return Err(anyhow!("Invalid BGZF block size: {}", total_size));
         }
 
@@ -158,7 +156,9 @@ pub fn build_flag_index_low_level(bam_path: &str) -> Result<FlagIndex> {
         let total_block_size = bsize + 1;
 
         // Sanity-check the block size.
-        if total_block_size < BGZF_HEADER_SIZE + BGZF_FOOTER_SIZE || total_block_size > 65536 {
+        if total_block_size < BGZF_HEADER_SIZE + BGZF_FOOTER_SIZE
+            || total_block_size > BGZF_BLOCK_MAX_SIZE
+        {
             return Err(anyhow!("Invalid BGZF block size: {}", total_block_size));
         }
         if pos + total_block_size > data.len() {
@@ -226,7 +226,8 @@ pub fn build_flag_index_streaming_parallel(bam_path: &str) -> Result<FlagIndex> 
             let total_size = bsize + 1;
 
             // Validate block size
-            if total_size < BGZF_HEADER_SIZE + BGZF_FOOTER_SIZE || total_size > 65536 {
+            if total_size < BGZF_HEADER_SIZE + BGZF_FOOTER_SIZE || total_size > BGZF_BLOCK_MAX_SIZE
+            {
                 return Err(anyhow!("Invalid BGZF block size: {}", total_size));
             }
 
@@ -362,7 +363,8 @@ pub fn count_flags_multithreaded_decompression(
             let bsize = u16::from_le_bytes([header[16], header[17]]) as usize;
             let total_size = bsize + 1;
 
-            if total_size < BGZF_HEADER_SIZE + BGZF_FOOTER_SIZE || total_size > 65536 {
+            if total_size < BGZF_HEADER_SIZE + BGZF_FOOTER_SIZE || total_size > BGZF_BLOCK_MAX_SIZE
+            {
                 return Err(anyhow!("Invalid BGZF block size: {}", total_size));
             }
 

@@ -48,7 +48,7 @@ impl IndexingStrategy for ChannelProducerConsumerStrategy {
                     let total_size = bsize + 1;
                     
                     // Validate block size
-                    if total_size < BGZF_HEADER_SIZE + BGZF_FOOTER_SIZE || total_size > 65536 {
+                    if total_size < BGZF_HEADER_SIZE + BGZF_FOOTER_SIZE || total_size > BGZF_BLOCK_MAX_SIZE {
                         eprintln!("Invalid BGZF block size: {}", total_size);
                         break;
                     }
