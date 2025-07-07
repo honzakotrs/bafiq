@@ -1,9 +1,15 @@
-use super::BlockInfo;
 use crate::bgzf::{BGZF_BLOCK_MAX_SIZE, BGZF_FOOTER_SIZE, BGZF_HEADER_SIZE};
 use crate::FlagIndex;
 use anyhow::{anyhow, Result};
 use libdeflater::Decompressor;
 use std::ptr;
+
+// Common types used across strategies
+#[derive(Clone)]
+pub struct BlockInfo {
+    pub start_pos: usize,
+    pub total_size: usize,
+}
 
 /// Extract flags from BAM records using provided buffers (memory-efficient version)
 ///
