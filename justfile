@@ -923,7 +923,7 @@ bench-view:
         
         # Performance ranking and analysis
         echo ""
-        echo "🏆 Performance Ranking:"
+        echo "Performance Ranking:"
         echo "----------------------------------------------------------------"
         if [ "$SINGLE_THREAD" = true ]; then
             printf "%-20s %-15s %-10s %-10s %-10s %-10s %-10s\n" "BAM File" "Flag" "Tool" "Time" "Peak RAM" "Avg RAM" "Peak CPU"

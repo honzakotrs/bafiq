@@ -23,7 +23,7 @@ use crate::index::strategies::{
 pub enum BuildStrategy {
     /// Channel-based producer-consumer - crossbeam channels architecture (2.127s) 📡 CHANNELS
     ChannelProducerConsumer,
-    /// Work-stealing processing - fastest performing approach (1.427s) 🏆 FASTEST
+    /// Work-stealing processing - fastest performing approach (1.427s) FASTEST
     WorkStealing,
     /// constant-memory processing - constant RAM footprint for any file size 💾 EFFICIENT
     ConstantMemory,

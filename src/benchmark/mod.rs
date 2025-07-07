@@ -535,11 +535,6 @@ pub fn count_flags_libdeflate_thread_pool(
     Ok(total_count)
 }
 
-// Helper functions
-
-// PERFORMANCE NOTE: extract_flags_from_block removed from benchmark module too!
-// All benchmarks now use extract_flags_from_block_pooled with optimizations
-
 fn count_flags_in_decompressed_block(
     decompressed_data: &[u8],
     required_flags: u16,
