@@ -13,9 +13,8 @@ use std::thread as std_thread;
 // Import strategies
 use crate::index::strategies::shared::count_flags_in_block_optimized;
 use crate::index::strategies::{
-    adaptive_memory_mapped::AdaptiveMemoryMappedStrategy, constant_memory::ConstantMemoryStrategy,
-    parallel_streaming::ChannelProducerConsumerStrategy, work_stealing::WorkStealingStrategy,
-    IndexingStrategy,
+    constant_memory::ConstantMemoryStrategy, parallel_streaming::ChannelProducerConsumerStrategy,
+    work_stealing::WorkStealingStrategy, IndexingStrategy,
 };
 
 /// Available index building strategies
@@ -27,8 +26,6 @@ pub enum BuildStrategy {
     WorkStealing,
     /// constant-memory processing - constant RAM footprint for any file size 💾 EFFICIENT
     ConstantMemory,
-    /// Adaptive memory-mapped streaming - best of both worlds (performance + memory efficiency) 🧠 SMART
-    AdaptiveMemoryMapped,
 }
 
 /// Primary interface for building flag indexes with different strategies
@@ -43,7 +40,6 @@ impl BuildStrategy {
             BuildStrategy::ChannelProducerConsumer => "channel_producer_consumer",
             BuildStrategy::WorkStealing => "work_stealing",
             BuildStrategy::ConstantMemory => "memory_friendly",
-            BuildStrategy::AdaptiveMemoryMapped => "adaptive_memory_mapped",
         }
     }
 
@@ -53,7 +49,6 @@ impl BuildStrategy {
             BuildStrategy::ChannelProducerConsumer,
             BuildStrategy::WorkStealing,
             BuildStrategy::ConstantMemory,
-            BuildStrategy::AdaptiveMemoryMapped,
         ]
     }
 
@@ -95,7 +90,6 @@ impl IndexBuilder {
             }
             BuildStrategy::WorkStealing => WorkStealingStrategy.build(path_str),
             BuildStrategy::ConstantMemory => ConstantMemoryStrategy.build(path_str),
-            BuildStrategy::AdaptiveMemoryMapped => AdaptiveMemoryMappedStrategy.build(path_str),
         }
     }
 

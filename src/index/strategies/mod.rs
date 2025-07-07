@@ -2,7 +2,6 @@ use crate::FlagIndex;
 use anyhow::Result;
 
 // Re-export all strategy implementations
-pub mod adaptive_memory_mapped;
 pub mod constant_memory;
 pub mod parallel_streaming;
 pub mod shared;

@@ -18,9 +18,6 @@ pub enum CliStrategy {
     /// constant-memory processing - constant RAM footprint for any file size
     #[value(name = "constant-memory")]
     ConstantMemory,
-    /// Adaptive memory-mapped streaming - best of both worlds (performance + memory efficiency)
-    #[value(name = "adaptive-memory-mapped")]
-    AdaptiveMemoryMapped,
 }
 
 impl From<CliStrategy> for BuildStrategy {
@@ -29,7 +26,6 @@ impl From<CliStrategy> for BuildStrategy {
             CliStrategy::ChannelProducerConsumer => BuildStrategy::ChannelProducerConsumer,
             CliStrategy::WorkStealing => BuildStrategy::WorkStealing,
             CliStrategy::ConstantMemory => BuildStrategy::ConstantMemory,
-            CliStrategy::AdaptiveMemoryMapped => BuildStrategy::AdaptiveMemoryMapped,
         }
     }
 }
