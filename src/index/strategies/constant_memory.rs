@@ -37,16 +37,12 @@ impl IndexingStrategy for ConstantMemoryStrategy {
         // **CONSTANT MEMORY CONFIGURATION**
         const CHUNK_SIZE_MB: usize = 32;               // 32MB chunks for good I/O
         const OVERLAP_KB: usize = 128;                 // 128KB overlap for block boundaries
-        const MEMORY_CHECK_INTERVAL: usize = 20;       // Check every 20 chunks
         
         let mut file = File::open(bam_path)?;
         let file_size = file.metadata()?.len();
         
-        println!("CONSTANT MEMORY STREAMING STRATEGY");
-        println!("   File: {}GB", file_size / (1024 * 1024 * 1024));
-        println!("   Chunk size: {}MB + {}KB overlap", CHUNK_SIZE_MB, OVERLAP_KB);
-        println!("   Target: O(1) constant memory usage");
-        println!("   Processing blocks immediately without accumulation");
+        println!("File: {}GB", file_size / (1024 * 1024 * 1024));
+        println!("Chunk size: {}MB + {}KB overlap", CHUNK_SIZE_MB, OVERLAP_KB);
         
         let mut final_index = FlagIndex::new();
         let mut current_file_pos = 0u64;
@@ -85,6 +81,7 @@ impl IndexingStrategy for ConstantMemoryStrategy {
                 continue;
             }
             
+            #[cfg(debug_assertions)]
             println!("Chunk {}: {}MB, {} blocks @ {}MB ({:.1}% complete)", 
                      chunk_count, 
                      base_chunk_size / (1024 * 1024),
@@ -102,16 +99,10 @@ impl IndexingStrategy for ConstantMemoryStrategy {
             
             total_blocks_processed += complete_blocks.len();
             
+            #[cfg(debug_assertions)]
             println!("   {} blocks → {} records total", 
                      complete_blocks.len(), final_index.total_records());
-            
-            // **RELAXED MEMORY MONITORING**
-            if chunk_count % MEMORY_CHECK_INTERVAL == 0 {
-                if let Some(current_rss_mb) = get_current_memory_usage_mb() {
-                    println!("Memory check: {}MB (should be constant)", current_rss_mb);
-                }
-            }
-            
+    
             // **ADVANCE POSITION**
             current_file_pos += bytes_consumed;
             
@@ -120,11 +111,11 @@ impl IndexingStrategy for ConstantMemoryStrategy {
         }
         
         let final_memory = get_current_memory_usage_mb().unwrap_or(0);
-        println!("Complete:");
-        println!("   Chunks: {}", chunk_count);
-        println!("   Blocks: {}", total_blocks_processed);  
-        println!("   Records: {}", final_index.total_records());
-        println!("   Final memory: {}MB", final_memory);
+        println!("Done.");
+        println!("Chunks: {}", chunk_count);
+        println!("Blocks: {}", total_blocks_processed);  
+        println!("Records: {}", final_index.total_records());
+        println!("Final memory: {}MB", final_memory);
         
         Ok(final_index)
     }
