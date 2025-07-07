@@ -4,7 +4,6 @@ use anyhow::Result;
 // Re-export all strategy implementations
 pub mod channel_pc;
 pub mod constant_memory;
-pub mod shared;
 pub mod work_stealing;
 
 pub trait IndexingStrategy {

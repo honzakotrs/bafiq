@@ -1,5 +1,6 @@
 pub mod builder;
 pub mod compressed;
+pub mod discovery;
 pub mod format;
 pub mod strategies;
 

@@ -1,6 +1,9 @@
-use crate::bgzf::{is_bgzf_header, BGZF_BLOCK_MAX_SIZE, BGZF_FOOTER_SIZE, BGZF_HEADER_SIZE};
+use crate::bgzf::{BGZF_BLOCK_MAX_SIZE, BGZF_FOOTER_SIZE, BGZF_HEADER_SIZE};
 use crate::FlagIndex;
 use anyhow::{anyhow, Result};
+use libdeflater::Decompressor;
+use std::ptr;
+
 use crossbeam::channel::unbounded;
 use memmap2::Mmap;
 use std::fs::File;
@@ -10,8 +13,9 @@ use std::path::Path;
 use std::sync::Arc;
 use std::thread as std_thread;
 
+use crate::bgzf::is_bgzf_header;
+
 // Import strategies
-use crate::index::strategies::shared::count_flags_in_block_optimized;
 use crate::index::strategies::{
     channel_pc::ChannelProducerConsumerStrategy, constant_memory::ConstantMemoryStrategy,
     work_stealing::WorkStealingStrategy, IndexingStrategy,
@@ -222,6 +226,67 @@ impl IndexBuilder {
 
         Ok(total_count)
     }
+}
+
+/// Optimized flag counting with thread-local buffer reuse
+fn count_flags_in_block_optimized(
+    block: &[u8],
+    required_flags: u16,
+    forbidden_flags: u16,
+) -> Result<u64> {
+    thread_local! {
+        static BUFFER: std::cell::RefCell<Vec<u8>> = std::cell::RefCell::new(vec![0u8; BGZF_BLOCK_MAX_SIZE]);
+        static DECOMPRESSOR: std::cell::RefCell<Decompressor> = std::cell::RefCell::new(Decompressor::new());
+    }
+
+    BUFFER.with(|buf| {
+        DECOMPRESSOR.with(|decomp| {
+            let mut output = buf.borrow_mut();
+            let mut decompressor = decomp.borrow_mut();
+
+            let decompressed_size = decompressor
+                .gzip_decompress(block, &mut output)
+                .map_err(|e| anyhow!("Decompression failed: {:?}", e))?;
+
+            // Skip BAM header blocks
+            if decompressed_size >= 4 && &output[0..4] == b"BAM\x01" {
+                return Ok(0);
+            }
+
+            let mut count = 0u64;
+            let mut pos = 0;
+
+            unsafe {
+                let out_ptr = output.as_ptr();
+                while pos + 4 <= decompressed_size {
+                    let rec_size =
+                        u32::from_le(ptr::read_unaligned(out_ptr.add(pos) as *const u32)) as usize;
+
+                    if pos + 4 + rec_size > decompressed_size {
+                        break;
+                    }
+
+                    // Extract flags at offset 14-15 in record body
+                    if rec_size >= 16 {
+                        let record_body =
+                            std::slice::from_raw_parts(out_ptr.add(pos + 4), rec_size);
+                        let flags = u16::from_le_bytes([record_body[14], record_body[15]]);
+
+                        // Apply flag filters
+                        if (flags & required_flags) == required_flags
+                            && (flags & forbidden_flags) == 0
+                        {
+                            count += 1;
+                        }
+                    }
+
+                    pos += 4 + rec_size;
+                }
+            }
+
+            Ok(count)
+        })
+    })
 }
 
 impl Default for IndexBuilder {

@@ -6,7 +6,7 @@ use anyhow::Result;
 
 use crate::FlagIndex;
 use super::{IndexingStrategy};
-use super::shared::{discover_blocks_fast, extract_flags_from_block_pooled};
+use crate::index::discovery::{discover_blocks_fast, extract_flags_from_block_pooled};
 use crate::bgzf::{BGZF_BLOCK_MAX_SIZE};
 
 /// **WORK STEALING STRATEGY** - The fastest performing approach (3.409s)

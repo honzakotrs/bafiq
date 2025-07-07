@@ -6,7 +6,7 @@ use memmap2::Mmap;
 use std::fs::File;
 use std::sync::Arc;
 
-use super::shared::extract_flags_from_block_pooled;
+use crate::index::discovery::extract_flags_from_block_pooled;
 use super::{IndexingStrategy};
 use crate::FlagIndex;
 use crate::bgzf::{is_bgzf_header, BGZF_BLOCK_MAX_SIZE, BGZF_FOOTER_SIZE, BGZF_HEADER_SIZE};

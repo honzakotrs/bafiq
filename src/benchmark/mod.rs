@@ -4,7 +4,7 @@
 //! used for performance benchmarking and comparison. These functions are specifically
 //! designed for benchmarking different approaches to BAM file processing.
 
-use crate::index::strategies::shared::extract_flags_from_block_pooled;
+use crate::index::discovery::extract_flags_from_block_pooled;
 use crate::FlagIndex;
 use anyhow::{anyhow, Result};
 use libdeflater::Decompressor;
