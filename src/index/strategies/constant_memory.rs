@@ -4,10 +4,10 @@ use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use rayon::prelude::*;
 
-use super::shared::{extract_flags_from_block_pooled, is_gzip_header};
+use super::shared::extract_flags_from_block_pooled;
 use super::{IndexingStrategy};
 use crate::FlagIndex;
-use crate::bgzf::{BGZF_BLOCK_MAX_SIZE, BGZF_FOOTER_SIZE, BGZF_HEADER_SIZE};
+use crate::bgzf::{is_bgzf_header, BGZF_BLOCK_MAX_SIZE, BGZF_FOOTER_SIZE, BGZF_HEADER_SIZE};
 
 /// Information about a BGZF block's location in the file
 #[derive(Debug, Clone)]
@@ -163,7 +163,7 @@ fn discover_complete_blocks_in_chunk(
         }
         
         let header = &chunk_data[pos..pos + BGZF_HEADER_SIZE];
-        if !is_gzip_header(header) {
+        if !is_bgzf_header(header) {
             pos += 1;
             continue;
         }
