@@ -40,7 +40,6 @@ pub struct CompressionStats {
     pub compression_ratio: f64,
     pub sparsity_savings: usize,
     pub delta_savings: usize,
-    pub runlength_savings: usize,
     pub total_flags_used: usize,
 }
 
@@ -68,8 +67,7 @@ impl CompressionStats {
         println!("Breakdown by technique:");
 
         // Calculate individual technique contributions as percentages of total technique savings
-        let total_technique_savings =
-            self.sparsity_savings + self.delta_savings + self.runlength_savings;
+        let total_technique_savings = self.sparsity_savings + self.delta_savings;
 
         if total_technique_savings > 0 {
             println!(
@@ -81,11 +79,6 @@ impl CompressionStats {
                 "   - Delta encoding: {} bytes saved ({:.1}%)",
                 self.delta_savings,
                 self.delta_savings as f64 / total_technique_savings as f64 * 100.0
-            );
-            println!(
-                "   - Run-length encoding: {} bytes saved ({:.1}%)",
-                self.runlength_savings,
-                self.runlength_savings as f64 / total_technique_savings as f64 * 100.0
             );
             println!();
             println!(
@@ -216,7 +209,6 @@ impl CompressedFlagIndex {
             },
             sparsity_savings: (4096 - sparse_stats.used_flags) * 32, // Estimated bytes per unused bin
             delta_savings: total_delta_savings,
-            runlength_savings: 0, // Not implemented in this version
             total_flags_used: sparse_stats.used_flags,
         };
 
