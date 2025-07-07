@@ -1,2 +1,11 @@
 # Rust gitignore
 target/
+*.bam
+*.sam
+*.bfi
+*.bai
+
+.DS_Store
+
+cargo-flamegraph.trace/
+benchmark_results/
