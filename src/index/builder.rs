@@ -24,7 +24,7 @@ pub enum BuildStrategy {
     ChannelProducerConsumer,
     /// Work-stealing processing - fastest performing approach (1.427s) FASTEST
     WorkStealing,
-    /// constant-memory processing - constant RAM footprint for any file size 💾 EFFICIENT
+    /// constant-memory processing - constant RAM footprint for any file size EFFICIENT
     ConstantMemory,
 }
 

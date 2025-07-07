@@ -574,7 +574,7 @@ bench-view:
         if command -v samtools &> /dev/null; then
             SAMTOOLS_AVAILABLE=true
             SAMTOOLS_VERSION=$(samtools --version 2>/dev/null | head -1 | awk '{print $2}' || echo "unknown")
-            echo "✅ samtools found: version $SAMTOOLS_VERSION"
+            echo "samtools found: version $SAMTOOLS_VERSION"
         else
             echo "⚠️  samtools not found in PATH. Install with:"
             echo "   macOS: brew install samtools"
@@ -584,7 +584,7 @@ bench-view:
         if command -v sambamba &> /dev/null; then
             SAMBAMBA_AVAILABLE=true
             SAMBAMBA_VERSION=$(sambamba --version 2>/dev/null | head -1 | awk '{print $2}' || echo "unknown")
-            echo "✅ sambamba found: version $SAMBAMBA_VERSION"
+            echo "sambamba found: version $SAMBAMBA_VERSION"
         else
             SAMBAMBA_AVAILABLE=false
             echo "ℹ️  sambamba not found in PATH (optional)"
@@ -761,17 +761,17 @@ bench-view:
                             "bafiq-view")
                                 if [ "$thread_count" = "auto" ]; then
                                     if [ "$SINGLE_THREAD" = true ]; then
-                                        echo "   🚀 bafiq view"
+                                        echo "   bafiq view"
                                     else
-                                        echo "   🚀 bafiq view (auto threads)"
+                                        echo "   bafiq view (auto threads)"
                                     fi
                                     ./target/release/bafiq view -f $flag "$bam_file" > "$TEMP_DIR/out.bafiq.${thread_count}t.${flag}.sam" &
                                     BENCHMARK_PID=$!
                                 else
                                     if [ "$SINGLE_THREAD" = true ]; then
-                                        echo "   🚀 bafiq view"
+                                        echo "   bafiq view"
                                     else
-                                        echo "   🚀 bafiq view (${thread_count} threads)"
+                                        echo "   bafiq view (${thread_count} threads)"
                                     fi
                                     ./target/release/bafiq --threads "$thread_count" view -f $flag "$bam_file" > "$TEMP_DIR/out.bafiq.${thread_count}t.${flag}.sam" &
                                     BENCHMARK_PID=$!
@@ -916,7 +916,7 @@ bench-view:
         done
         
         if [ "$ALL_MATCH" = true ]; then
-            echo "✅ All available tools found identical number of reads across all combinations"
+            echo "All available tools found identical number of reads across all combinations"
         else
             echo "❌ Read counts differ between tools or configurations"
         fi
@@ -972,7 +972,7 @@ bench-view:
         
         # Speed comparison analysis
         echo ""
-        echo "🚀 Speed Analysis:"
+        echo "Speed Analysis:"
         if [ "$SINGLE_THREAD" = true ]; then
             FASTEST_OVERALL=$(tail -n +2 "$COMBINED_CSV" | sort -t, -k4 -n | head -1)
             if [ -n "$FASTEST_OVERALL" ]; then
@@ -1024,7 +1024,7 @@ bench-view:
         
         # Memory efficiency analysis
         echo ""
-        echo "💾 Memory Analysis:"
+        echo "Memory Analysis:"
         if [ "$SINGLE_THREAD" = true ]; then
             MOST_EFFICIENT=$(tail -n +2 "$COMBINED_CSV" | sort -t, -k5 -n | head -1)
             if [ -n "$MOST_EFFICIENT" ]; then
@@ -1067,7 +1067,7 @@ bench-view:
         fi
         
         if [ "$CONTENT_MATCH" = true ]; then
-            echo "✅ Content samples match across all available tools (checked $(basename "$FIRST_BAM"), $FIRST_FLAG, $FIRST_THREAD threads)"
+            echo "Content samples match across all available tools (checked $(basename "$FIRST_BAM"), $FIRST_FLAG, $FIRST_THREAD threads)"
         else
             echo "❌ Content differs between available tools (checked $(basename "$FIRST_BAM"), $FIRST_FLAG, $FIRST_THREAD threads)"
             echo "   Manual inspection recommended"

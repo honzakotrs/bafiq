@@ -386,7 +386,7 @@ fn cmd_index(args: IndexArgs) -> Result<()> {
             .to_str()
             .ok_or_else(|| anyhow!("Invalid file path"))?;
 
-        eprintln!("🔄 Force rebuilding index...");
+        eprintln!("Force rebuilding index...");
         let uncompressed_index = builder.build(input_str)?;
 
         // Create and save serializable index

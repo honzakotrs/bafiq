@@ -585,7 +585,7 @@ impl IndexManager {
                 }
             }
         } else if force_rebuild {
-            eprintln!("🔄 Force rebuilding index...");
+            eprintln!("Force rebuilding index...");
         } else {
             eprintln!("No saved index found, building...");
         }
