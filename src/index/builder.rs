@@ -31,26 +31,12 @@ pub struct IndexBuilder {
 
 impl BuildStrategy {
     /// Get the canonical name for this strategy (used in benchmarks and CLI)
-    pub fn name(&self) -> &'static str {
-        match self {
-            BuildStrategy::ChannelProducerConsumer => "channel_producer_consumer",
-            BuildStrategy::WorkStealing => "work_stealing",
-            BuildStrategy::ConstantMemory => "memory_friendly",
-        }
+    pub fn name(&self) -> String {
+        self.to_possible_value().unwrap().get_name().to_string()
     }
-
-    /// Get all available strategies for benchmarking
-    pub fn all_strategies() -> Vec<BuildStrategy> {
-        vec![
-            BuildStrategy::ChannelProducerConsumer,
-            BuildStrategy::WorkStealing,
-            BuildStrategy::ConstantMemory,
-        ]
-    }
-
     /// Get strategies suitable for routine benchmarking (excludes slow ones)
     pub fn benchmark_strategies() -> Vec<BuildStrategy> {
-        Self::all_strategies().into_iter().collect()
+        BuildStrategy::value_variants().to_vec()
     }
 }
 

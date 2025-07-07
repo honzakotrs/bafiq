@@ -10,7 +10,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 use sysinfo::{Pid, System};
 
-use bafiq::{BuildStrategy, FlagIndex, IndexBuilder};
+use bafiq::{benchmark, BuildStrategy, FlagIndex, IndexBuilder};
 
 /// Global storage for resource usage data from Criterion benchmarks
 static CRITERION_RESOURCE_DATA: LazyLock<Mutex<HashMap<String, ResourceStats>>> =
@@ -219,7 +219,7 @@ enum BenchmarkEntry {
 
 impl BenchmarkEntry {
     /// Get the name of this benchmark entry
-    fn name(&self) -> &str {
+    fn name(&self) -> String {
         match self {
             BenchmarkEntry::Strategy(strategy) => strategy.name(),
         }
@@ -590,7 +590,7 @@ fn simple_benchmarks() -> Result<()> {
     }
 
     // Show comparison hint
-    println!("Tip: memory_friendly should show more controlled memory usage compared to others");
+    println!("💡 Tip: memory_friendly should show more controlled memory usage compared to others");
     println!("     Run 'just bench-csv' to export detailed CSV data for plotting");
     println!();
 
