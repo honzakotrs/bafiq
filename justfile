@@ -454,7 +454,7 @@ bench:
         echo ""
         
         echo "Results saved to: $COMBINED_CSV"
-        echo "📈 Detailed memory samples saved to: $MEMORY_CSV"
+        echo "Detailed memory samples saved to: $MEMORY_CSV"
         echo ""
         echo "Tip: Use the detailed memory CSV to reconstruct memory usage over time"
         echo "Thread scaling benchmarks completed successfully"

@@ -1,5 +1,6 @@
 use crate::FlagIndex;
 use anyhow::{anyhow, Result};
+use clap::ValueEnum;
 
 use std::path::Path;
 
@@ -10,13 +11,16 @@ use crate::index::strategies::{
 };
 
 /// Available index building strategies
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, ValueEnum)]
 pub enum BuildStrategy {
-    /// Channel-based producer-consumer - crossbeam channels architecture (2.127s) 📡 CHANNELS
+    /// Channel-based producer-consumer - crossbeam channels architecture
+    #[value(name = "channel-producer-consumer")]
     ChannelProducerConsumer,
-    /// Work-stealing processing - fastest performing approach (1.427s) FASTEST
+    /// Work-stealing processing - fastest performing approach
+    #[value(name = "work-stealing")]
     WorkStealing,
-    /// constant-memory processing - constant RAM footprint for any file size EFFICIENT
+    /// Constant memory processing - constant RAM footprint for any file size
+    #[value(name = "constant-memory")]
     ConstantMemory,
 }
 

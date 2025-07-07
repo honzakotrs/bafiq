@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Result};
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Parser, Subcommand};
 use rayon::ThreadPoolBuilder;
 use rust_htslib::bam::{Format, Read as BamRead, Writer};
 use std::path::{Path, PathBuf};
@@ -7,30 +7,6 @@ use std::path::{Path, PathBuf};
 use bafiq::{
     view::fast_count::scan_count, BuildStrategy, IndexBuilder, IndexManager, SerializableIndex,
 };
-
-/// CLI-friendly strategy names that map to BuildStrategy
-#[derive(Debug, Clone, ValueEnum)]
-pub enum CliStrategy {
-    /// Channel-based producer-consumer - crossbeam channels architecture (2.127s)
-    #[value(name = "channel-producer-consumer")]
-    ChannelProducerConsumer,
-    /// Work-stealing processing - fastest performing approach (1.427s)
-    #[value(name = "work-stealing")]
-    WorkStealing,
-    /// constant-memory processing - constant RAM footprint for any file size
-    #[value(name = "constant-memory")]
-    ConstantMemory,
-}
-
-impl From<CliStrategy> for BuildStrategy {
-    fn from(cli_strategy: CliStrategy) -> Self {
-        match cli_strategy {
-            CliStrategy::ChannelProducerConsumer => BuildStrategy::ChannelProducerConsumer,
-            CliStrategy::WorkStealing => BuildStrategy::WorkStealing,
-            CliStrategy::ConstantMemory => BuildStrategy::ConstantMemory,
-        }
-    }
-}
 
 /// Parse flag values supporting hex (0x4), decimal (4), and binary (0b100) formats like samtools
 fn parse_flag_value(flag_str: &str) -> Result<u16> {
@@ -258,7 +234,7 @@ pub struct IndexArgs {
         default_value = "work-stealing",
         help = "Index building strategy to use (default: work-stealing for maximum performance)"
     )]
-    pub strategy: CliStrategy,
+    pub strategy: BuildStrategy,
 
     /// Enable index compression (slower build, smaller files)
     #[arg(
