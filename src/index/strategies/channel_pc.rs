@@ -6,7 +6,7 @@ use memmap2::Mmap;
 use std::fs::File;
 use std::sync::Arc;
 
-use super::shared::extract_flags_from_block_pooled;
+use super::shared::{extract_flags_from_block_pooled, is_gzip_header};
 use super::{IndexingStrategy, BGZF_BLOCK_MAX_SIZE, BGZF_FOOTER_SIZE, BGZF_HEADER_SIZE};
 use crate::FlagIndex;
 
@@ -37,7 +37,7 @@ impl IndexingStrategy for ChannelProducerConsumerStrategy {
                     let header = &data_producer[pos..pos + BGZF_HEADER_SIZE];
                     
                     // Validate GZIP magic
-                    if header[0..2] != [0x1f, 0x8b] {
+                    if !is_gzip_header(header) {
                         eprintln!("Invalid GZIP header at position {}", pos);
                         break;
                     }

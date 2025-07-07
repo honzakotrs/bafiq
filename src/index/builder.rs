@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::thread as std_thread;
 
 // Import strategies
-use crate::index::strategies::shared::count_flags_in_block_optimized;
+use crate::index::strategies::shared::{count_flags_in_block_optimized, is_gzip_header};
 use crate::index::strategies::{
     channel_pc::ChannelProducerConsumerStrategy, constant_memory::ConstantMemoryStrategy,
     work_stealing::WorkStealingStrategy, IndexingStrategy,
@@ -132,7 +132,7 @@ impl IndexBuilder {
                 let header = &data_producer[pos..pos + BGZF_HEADER_SIZE];
 
                 // Validate GZIP magic
-                if header[0..2] != [0x1f, 0x8b] {
+                if !is_gzip_header(header) {
                     return Err(anyhow!("Invalid GZIP header at position {}", pos));
                 }
 

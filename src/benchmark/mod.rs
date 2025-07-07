@@ -4,7 +4,7 @@
 //! used for performance benchmarking and comparison. These functions are specifically
 //! designed for benchmarking different approaches to BAM file processing.
 
-use crate::index::strategies::shared::extract_flags_from_block_pooled;
+use crate::index::strategies::shared::{extract_flags_from_block_pooled, is_gzip_header};
 use crate::FlagIndex;
 use anyhow::{anyhow, Result};
 use libdeflater::Decompressor;
@@ -40,7 +40,7 @@ fn discover_all_blocks(data: &[u8]) -> Result<Vec<BlockInfo>> {
         let header = &data[pos..pos + BGZF_HEADER_SIZE];
 
         // Validate GZIP magic
-        if header[0..2] != [0x1f, 0x8b] {
+        if !is_gzip_header(header) {
             return Err(anyhow!("Invalid GZIP header at position {}", pos));
         }
 
@@ -149,7 +149,7 @@ pub fn build_flag_index_low_level(bam_path: &str) -> Result<FlagIndex> {
         let header = &data[pos..pos + BGZF_HEADER_SIZE];
 
         // Validate the GZIP magic bytes.
-        if header[0..2] != [0x1f, 0x8b] {
+        if !is_gzip_header(header) {
             return Err(anyhow!("Invalid GZIP header in BGZF block"));
         }
 
@@ -217,7 +217,7 @@ pub fn build_flag_index_streaming_parallel(bam_path: &str) -> Result<FlagIndex> 
             let header = &data_producer[pos..pos + BGZF_HEADER_SIZE];
 
             // Validate GZIP magic
-            if header[0..2] != [0x1f, 0x8b] {
+            if !is_gzip_header(header) {
                 return Err(anyhow!("Invalid GZIP header at position {}", pos));
             }
 
@@ -355,7 +355,7 @@ pub fn count_flags_multithreaded_decompression(
             }
 
             let header = &data_discovery[pos..pos + BGZF_HEADER_SIZE];
-            if header[0..2] != [0x1f, 0x8b] {
+            if !is_gzip_header(header) {
                 return Err(anyhow!("Invalid GZIP header at position {}", pos));
             }
 

@@ -99,6 +99,11 @@ pub fn extract_flags_from_decompressed_simd_optimized(
     Ok(())
 }
 
+/// Check if the header is a valid GZIP header
+pub fn is_gzip_header(header: &[u8]) -> bool {
+    header[0..2] == [0x1f, 0x8b]
+}
+
 /// Fast sequential block discovery
 pub fn discover_blocks_fast(data: &[u8]) -> Result<Vec<BlockInfo>> {
     let mut blocks = Vec::new();
@@ -110,7 +115,7 @@ pub fn discover_blocks_fast(data: &[u8]) -> Result<Vec<BlockInfo>> {
         }
 
         let header = &data[pos..pos + BGZF_HEADER_SIZE];
-        if header[0..2] != [0x1f, 0x8b] {
+        if !is_gzip_header(header) {
             return Err(anyhow!("Invalid GZIP header at position {}", pos));
         }
 

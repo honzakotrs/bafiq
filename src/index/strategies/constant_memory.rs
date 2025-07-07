@@ -4,7 +4,7 @@ use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use rayon::prelude::*;
 
-use super::shared::extract_flags_from_block_pooled;
+use super::shared::{extract_flags_from_block_pooled, is_gzip_header};
 use super::{IndexingStrategy, BGZF_BLOCK_MAX_SIZE, BGZF_HEADER_SIZE, BGZF_FOOTER_SIZE};
 use crate::FlagIndex;
 
@@ -119,13 +119,11 @@ impl IndexingStrategy for ConstantMemoryStrategy {
         }
         
         let final_memory = get_current_memory_usage_mb().unwrap_or(0);
-        println!("CONSTANT MEMORY STREAMING COMPLETE:");
+        println!("Complete:");
         println!("   Chunks: {}", chunk_count);
         println!("   Blocks: {}", total_blocks_processed);  
         println!("   Records: {}", final_index.total_records());
-        println!("   Final memory: {}MB (should be ~constant)", final_memory);
-        
-        println!("   Constant memory streaming successful!");
+        println!("   Final memory: {}MB", final_memory);
         
         Ok(final_index)
     }
@@ -164,7 +162,7 @@ fn discover_complete_blocks_in_chunk(
         }
         
         let header = &chunk_data[pos..pos + BGZF_HEADER_SIZE];
-        if header[0..2] != [0x1f, 0x8b] {
+        if !is_gzip_header(header) {
             pos += 1;
             continue;
         }
