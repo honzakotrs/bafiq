@@ -10,6 +10,11 @@ use crate::index::strategies::{
     work_stealing::WorkStealingStrategy, IndexingStrategy,
 };
 
+/// Primary interface for building flag indexes with different strategies
+pub struct IndexBuilder {
+    strategy: BuildStrategy,
+}
+
 /// Available index building strategies
 #[derive(Debug, Clone, Copy, ValueEnum)]
 pub enum BuildStrategy {
@@ -22,11 +27,6 @@ pub enum BuildStrategy {
     /// Constant memory processing - constant RAM footprint for any file size
     #[value(name = "constant-memory")]
     ConstantMemory,
-}
-
-/// Primary interface for building flag indexes with different strategies
-pub struct IndexBuilder {
-    strategy: BuildStrategy,
 }
 
 impl BuildStrategy {
