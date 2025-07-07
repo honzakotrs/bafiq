@@ -63,8 +63,6 @@ pub struct DeltaDecoder {
 }
 
 impl DeltaDecoder {
-    // Removed unused new method - use from_bytes instead
-
     /// Create from bytes (alternative constructor)
     pub fn from_bytes(data: &[u8]) -> Result<Self> {
         // Simple implementation - in practice this would need more metadata
