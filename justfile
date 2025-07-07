@@ -32,10 +32,10 @@ bench:
         echo "   Available CPU cores: $MAX_CORES"
         echo "   Thread counts to test: $THREADS"
         echo "   Fast development mode with resource monitoring"
-        echo "   💡 Override threads: BENCH_THREADS=\"1,2,4,8,$MAX_CORES\" just bench"
-        echo "   💡 Use auto threads: BENCH_THREADS=\"auto\" just bench (no --threads/-@ parameters)"
-        echo "   💡 Show memory plots: MEM_PLOTS=1 just bench"
-        echo "   💡 Both bafiq and samtools use explicit --threads/-@ for fair comparison"
+        echo "   Override threads: BENCH_THREADS=\"1,2,4,8,$MAX_CORES\" just bench"
+        echo "   Use auto threads: BENCH_THREADS=\"auto\" just bench (no --threads/-@ parameters)"
+        echo "   Show memory plots: MEM_PLOTS=1 just bench"
+        echo "   Both bafiq and samtools use explicit --threads/-@ for fair comparison"
         
         # Get original BAM size
         BAM_SIZE=$(stat -f%z "$BAFIQ_TEST_BAM" 2>/dev/null || stat -c%s "$BAFIQ_TEST_BAM" 2>/dev/null || echo "0")
@@ -59,7 +59,7 @@ bench:
         echo "threads,strategy,timestamp_ms,memory_mb,cpu_percent" > "$MEMORY_CSV"
         
         # Strategies to test (core strategies and reference tools)
-        STRATEGIES=("adaptive-memory-mapped" "constant-memory" "channel-producer-consumer" "work-stealing" "bafiq-fast-count" "samtools")
+        STRATEGIES=("constant-memory" "channel-producer-consumer" "work-stealing" "bafiq-fast-count" "samtools")
         
         # Temporary file for collecting all results
         TEMP_RESULTS=$(mktemp)
@@ -115,7 +115,7 @@ bench:
                 if [ "$strategy" = "samtools" ]; then
                     # Check if samtools is available
                     if ! command -v samtools &> /dev/null; then
-                        echo "   ⚠️  samtools not found - skipping"
+                        echo "    samtools not found - skipping"
                         continue
                     fi
                     
@@ -234,7 +234,7 @@ bench:
                         echo "   Time: ${DURATION_SEC}s, Peak Memory: ${PEAK_MEMORY_GB}GB, Avg CPU: ${AVG_CPU}%"
                     fi
                 else
-                    echo "   ❌ FAILED"
+                    echo "   FAILED"
                     if [ "$strategy" = "samtools" ]; then
                         cat /tmp/samtools_output.log
                     elif [ "$strategy" = "bafiq-fast-count" ]; then
@@ -333,18 +333,18 @@ bench:
         }
         
         # Generate plots for interesting strategies
-        PLOT_STRATEGIES=("adaptive-memory-mapped" "constant-memory" "work-stealing" "channel-producer-consumer" "bafiq-fast-count")
+        PLOT_STRATEGIES=("constant-memory" "work-stealing" "channel-producer-consumer" "bafiq-fast-count")
         for strategy in "${PLOT_STRATEGIES[@]}"; do
             for thread_count in "${THREAD_ARRAY[@]}"; do
                 generate_ascii_plot "$strategy" "$thread_count"
             done
         done
         
-            echo "💡 Tip: constant-memory should show more controlled memory usage compared to others"
+            echo "Tip: constant-memory should show more controlled memory usage compared to others"
             echo "     Set MEM_PLOTS=1 to see detailed ASCII memory timeline plots"
             echo ""
         else
-            echo "💡 Tip: Set MEM_PLOTS=1 to see ASCII memory timeline plots"
+            echo "Tip: Set MEM_PLOTS=1 to see ASCII memory timeline plots"
         fi
         
         # Generate comprehensive summary
@@ -456,7 +456,7 @@ bench:
         echo "Results saved to: $COMBINED_CSV"
         echo "📈 Detailed memory samples saved to: $MEMORY_CSV"
         echo ""
-        echo "💡 Tip: Use the detailed memory CSV to reconstruct memory usage over time"
+        echo "Tip: Use the detailed memory CSV to reconstruct memory usage over time"
         echo "Thread scaling benchmarks completed successfully"
         
         # Clean up
@@ -527,16 +527,16 @@ bench-view:
         echo "   Strategy: $STRATEGY (override with BENCH_STRATEGY=strategy-name)"
         echo "   CSV output and comprehensive memory monitoring"
         echo "   🔧 Will test: bafiq view (+ samtools view + sambamba view if available)"
-        echo "   💡 Override threads: BENCH_THREADS=\"1,2,4,8,$MAX_CORES\" just bench-view"
-        echo "   💡 Use auto threads: BENCH_THREADS=\"auto\" just bench-view"
-        echo "   💡 Multiple BAMs: BAFIQ_SOURCE_BAMS=\"chr1.bam,x.bam\" just bench-view"
-        echo "   💡 Multiple flags: BAFIQ_FLAGS=\"0x4,0x2,0x10\" just bench-view"
-        echo "   💡 Custom flags: BAFIQ_FLAGS=\"0x100,0x200,0x400\" just bench-view"
+        echo "   Override threads: BENCH_THREADS=\"1,2,4,8,$MAX_CORES\" just bench-view"
+        echo "   Use auto threads: BENCH_THREADS=\"auto\" just bench-view"
+        echo "   Multiple BAMs: BAFIQ_SOURCE_BAMS=\"chr1.bam,x.bam\" just bench-view"
+        echo "   Multiple flags: BAFIQ_FLAGS=\"0x4,0x2,0x10\" just bench-view"
+        echo "   Custom flags: BAFIQ_FLAGS=\"0x100,0x200,0x400\" just bench-view"
         
         # Validate BAM files existence before starting
         for bam_file in "${BAM_ARRAY[@]}"; do
             if [ ! -f "$bam_file" ]; then
-                echo "❌ BAM file not found: $bam_file"
+                echo "BAM file not found: $bam_file"
                 echo "   Please check the file path and permissions"
                 exit 1
             fi
@@ -576,7 +576,7 @@ bench-view:
             SAMTOOLS_VERSION=$(samtools --version 2>/dev/null | head -1 | awk '{print $2}' || echo "unknown")
             echo "samtools found: version $SAMTOOLS_VERSION"
         else
-            echo "⚠️  samtools not found in PATH. Install with:"
+            echo " samtools not found in PATH. Install with:"
             echo "   macOS: brew install samtools"
             echo "   Linux: sudo apt-get install samtools"
         fi
@@ -650,7 +650,7 @@ bench-view:
         echo ""
         echo "🧪 Tools to benchmark: ${STRATEGIES[*]}"
         if [ "$SAMTOOLS_AVAILABLE" = false ]; then
-            echo "   ⚠️  samtools will be skipped (not found)"
+            echo "    samtools will be skipped (not found)"
         fi
         if [ "$SAMBAMBA_AVAILABLE" = false ]; then
             echo "   ℹ️  sambamba will be skipped (not found, optional)"
@@ -688,7 +688,7 @@ bench-view:
             
             # Validate BAM file exists
             if [ ! -f "$bam_file" ]; then
-                echo "❌ BAM file not found: $bam_file"
+                echo "BAM file not found: $bam_file"
                 continue
             fi
             
@@ -715,7 +715,7 @@ bench-view:
                     
                     # Check if index exists
                     if [ ! -f "${bam_file}.bfi" ]; then
-                        echo "⚠️  Warning: Index not found for $(basename "$bam_file")"
+                        echo " Warning: Index not found for $(basename "$bam_file")"
                         echo "   Expected: ${bam_file}.bfi"
                         echo "   Please build index first: bafiq index \"$bam_file\""
                         continue
@@ -857,7 +857,7 @@ bench-view:
                     
                     echo "   Time: ${DURATION_SEC}s, Peak Memory: ${PEAK_MEMORY_GB}GB, Avg CPU: ${AVG_CPU}%, Reads: $READS_FOUND"
                 else
-                    echo "   ❌ FAILED"
+                    echo "   FAILED"
                 fi
                 
                                         # Clean up memory file
@@ -918,7 +918,7 @@ bench-view:
         if [ "$ALL_MATCH" = true ]; then
             echo "All available tools found identical number of reads across all combinations"
         else
-            echo "❌ Read counts differ between tools or configurations"
+            echo "Read counts differ between tools or configurations"
         fi
         
         # Performance ranking and analysis
@@ -1069,7 +1069,7 @@ bench-view:
         if [ "$CONTENT_MATCH" = true ]; then
             echo "Content samples match across all available tools (checked $(basename "$FIRST_BAM"), $FIRST_FLAG, $FIRST_THREAD threads)"
         else
-            echo "❌ Content differs between available tools (checked $(basename "$FIRST_BAM"), $FIRST_FLAG, $FIRST_THREAD threads)"
+            echo "Content differs between available tools (checked $(basename "$FIRST_BAM"), $FIRST_FLAG, $FIRST_THREAD threads)"
             echo "   Manual inspection recommended"
         fi
         
@@ -1116,7 +1116,7 @@ bench-view:
         trap - EXIT
         echo "   (Directory preserved for manual inspection)"
         echo ""
-        echo "💡 Use CSV files with plotting tools (same format as 'just bench')"
+        echo "Use CSV files with plotting tools (same format as 'just bench')"
     fi
 
 
