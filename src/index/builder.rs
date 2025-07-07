@@ -13,7 +13,7 @@ use std::thread as std_thread;
 // Import strategies
 use crate::index::strategies::shared::count_flags_in_block_optimized;
 use crate::index::strategies::{
-    constant_memory::ConstantMemoryStrategy, parallel_streaming::ChannelProducerConsumerStrategy,
+    channel_pc::ChannelProducerConsumerStrategy, constant_memory::ConstantMemoryStrategy,
     work_stealing::WorkStealingStrategy, IndexingStrategy,
 };
 
@@ -65,7 +65,7 @@ impl Default for BuildStrategy {
 }
 
 impl IndexBuilder {
-    /// Create a new index builder with default strategy (parallel chunk streaming)
+    /// Create a new index builder with default strategy
     pub fn new() -> Self {
         Self {
             strategy: BuildStrategy::default(),

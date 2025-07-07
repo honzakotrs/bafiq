@@ -2,8 +2,8 @@ use crate::FlagIndex;
 use anyhow::Result;
 
 // Re-export all strategy implementations
+pub mod channel_pc;
 pub mod constant_memory;
-pub mod parallel_streaming;
 pub mod shared;
 pub mod work_stealing;
 
