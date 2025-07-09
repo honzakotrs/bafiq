@@ -30,12 +30,21 @@ cargo install just
 ```
 
 Then use the project's built-in commands:
+
 ```bash
 # Build the project (handles macOS setup automatically)
 just build
 
-# Run interactive benchmark
-just bench-interactive /path/to/test.bam
+# Run `bafiq index` benchmark with different indexing strategies
+# alongside `bafiq fast-scan` and `samtools -c`
+# it repeats the run for each number of threads
+
+BENCH_THREADS="2,max" BAFIQ_TEST_BAM=/my.bam just bench
+
+# Run `bafiq view` benchmark; will run for each combination of values of set env
+# variables, comma separated
+
+BENCH_THREADS="2,max" BAFIQ_FLAGS="0x4,0x10,0x2" BAFIQ_SOURCE_BAMS="hg38.chr22.bam,chr1.bam" just bench-view
 
 # See all available commands
 just help
@@ -44,47 +53,5 @@ just help
 ## Manual Build
 
 ```bash
-cargo build --release
+just build
 ```
-
-## Performance Testing & Development
-
-bafiq includes comprehensive performance testing tools for validating optimizations:
-
-### Interactive Benchmarking (Preferred)
-
-```bash
-# Using just (recommended)
-just bench /path/to/test.bam
-```
-
-### Automated Performance Gate
-
-```bash
-# Using just (recommended)
-export BAFIQ_TEST_BAM=/path/to/test.bam
-just bench
-
-# Or manually
-export BAFIQ_TEST_BAM=/path/to/test.bam
-cargo bench
-```
-
-The performance gate requires the low-level approach to be at least 20% faster than rust-htslib while maintaining 100% correctness.
-
-## Data for benchmarking
-
-- WGS 30x, short-reads: https://ftp.ncbi.nlm.nih.gov/ReferenceSamples/giab/data/NA12878/NIST_NA12878_HG001_HiSeq_300x/
-- 
-
-## Version history
-
-### 0.0.5
-
-- added multiple strategies to build the index (stream, chunk, parellel)
-- introduced 3 layers of index compression to push down the final size (actually sped up the index due to reduced unused flag space)
-- added benchmarking via Criterion
-
-### 0.0.4
-
-- Use libdeflater for decompression to achieve 2x speedup in BAM record counting / reading
