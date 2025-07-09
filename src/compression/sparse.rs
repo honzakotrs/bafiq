@@ -1,8 +1,6 @@
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 
-/// Sparse storage that only stores used flag combinations instead of all 2^16 possibilities
-/// Achieves ~98.6% space reduction when only a few flag combinations are actually used
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SparseStorage<T> {
     /// Map from flag value to sparse index
@@ -64,8 +62,6 @@ impl<T> SparseStorage<T> {
         self.get_sparse_index(flag)
             .and_then(|idx| self.data.get(idx))
     }
-
-    // Removed unused get_data_mut method
 
     /// Create sparse storage from a flag index
     pub fn from_flag_index(flag_index: &crate::FlagIndex) -> Self {

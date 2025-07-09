@@ -5,8 +5,9 @@ use rayon::prelude::*;
 use anyhow::Result;
 
 use crate::FlagIndex;
-use super::{IndexingStrategy, BGZF_BLOCK_MAX_SIZE};
-use super::shared::{discover_blocks_fast, extract_flags_from_block_pooled};
+use super::{IndexingStrategy};
+use crate::index::discovery::{discover_blocks_fast, extract_flags_from_block_pooled};
+use crate::bgzf::{BGZF_BLOCK_MAX_SIZE};
 
 /// **WORK STEALING STRATEGY** - The fastest performing approach (3.409s)
 /// 

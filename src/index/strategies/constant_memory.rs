@@ -4,9 +4,10 @@ use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use rayon::prelude::*;
 
-use super::shared::extract_flags_from_block_pooled;
-use super::{IndexingStrategy, BGZF_BLOCK_MAX_SIZE, BGZF_HEADER_SIZE, BGZF_FOOTER_SIZE};
+use crate::index::discovery::extract_flags_from_block_pooled;
+use super::{IndexingStrategy};
 use crate::FlagIndex;
+use crate::bgzf::{is_bgzf_header, BGZF_BLOCK_MAX_SIZE, BGZF_FOOTER_SIZE, BGZF_HEADER_SIZE};
 
 /// Information about a BGZF block's location in the file
 #[derive(Debug, Clone)]
@@ -15,29 +16,20 @@ struct BlockInfo {
     total_size: usize,
 }
 
-/// **CONSTANT MEMORY STREAMING STRATEGY** 
+/// **O(1) memory with immediate processing:**
+/// - No batch accumulation**: Process blocks immediately as discovered
+/// - No block copying**: Read and process blocks in-place  
+/// - Streaming merge**: Merge index data immediately, no collection
+/// - Large chunks**: 32MB chunks for good I/O efficiency
+/// - Constant working set**: Only 1-2 blocks in memory at any time
+/// - Index size**: O(blocks × flags) - grows slowly with compressed file size
 /// 
-/// **TRUE O(1) MEMORY WITH IMMEDIATE PROCESSING:**
-/// - ✅ **No batch accumulation**: Process blocks immediately as discovered
-/// - ✅ **No block copying**: Read and process blocks in-place  
-/// - ✅ **Streaming merge**: Merge index data immediately, no collection
-/// - ✅ **Large chunks**: 32MB chunks for good I/O efficiency
-/// - ✅ **Constant working set**: Only 1-2 blocks in memory at any time
-/// - ✅ **Index size**: O(blocks × flags) - grows slowly with compressed file size
-/// 
-/// **Memory Profile:**
+/// **Memory profile:**
 /// - **Chunk buffer**: 32MB (constant)
 /// - **Working blocks**: ~64KB × 2 = 128KB (constant)  
 /// - **Thread buffers**: 64KB × threads (constant)
 /// - **Index**: ~50MB for 1GB file (grows sub-linearly)
 /// - **Total**: ~100MB constant working set
-/// 
-/// **True Constant Memory Architecture:**
-/// - Read chunk → discover blocks → process immediately → merge immediately
-/// - No intermediate collections or batch accumulation
-/// - Working memory independent of file size
-/// 
-/// **Target**: O(1) memory usage independent of input file size
 pub struct ConstantMemoryStrategy;
 
 impl IndexingStrategy for ConstantMemoryStrategy {
@@ -45,16 +37,12 @@ impl IndexingStrategy for ConstantMemoryStrategy {
         // **CONSTANT MEMORY CONFIGURATION**
         const CHUNK_SIZE_MB: usize = 32;               // 32MB chunks for good I/O
         const OVERLAP_KB: usize = 128;                 // 128KB overlap for block boundaries
-        const MEMORY_CHECK_INTERVAL: usize = 20;       // Check every 20 chunks
         
         let mut file = File::open(bam_path)?;
         let file_size = file.metadata()?.len();
         
-        println!("🎯 CONSTANT MEMORY STREAMING STRATEGY");
-        println!("   File: {}GB", file_size / (1024 * 1024 * 1024));
-        println!("   Chunk size: {}MB + {}KB overlap", CHUNK_SIZE_MB, OVERLAP_KB);
-        println!("   💾 Target: O(1) constant memory usage");
-        println!("   🚀 Processing blocks immediately without accumulation");
+        println!("File: {}GB", file_size / (1024 * 1024 * 1024));
+        println!("Chunk size: {}MB + {}KB overlap", CHUNK_SIZE_MB, OVERLAP_KB);
         
         let mut final_index = FlagIndex::new();
         let mut current_file_pos = 0u64;
@@ -93,7 +81,8 @@ impl IndexingStrategy for ConstantMemoryStrategy {
                 continue;
             }
             
-            println!("🔄 Chunk {}: {}MB, {} blocks @ {}MB ({:.1}% complete)", 
+            #[cfg(debug_assertions)]
+            println!("Chunk {}: {}MB, {} blocks @ {}MB ({:.1}% complete)", 
                      chunk_count, 
                      base_chunk_size / (1024 * 1024),
                      complete_blocks.len(),
@@ -110,16 +99,10 @@ impl IndexingStrategy for ConstantMemoryStrategy {
             
             total_blocks_processed += complete_blocks.len();
             
-            println!("   ✅ {} blocks → {} records total", 
+            #[cfg(debug_assertions)]
+            println!("   {} blocks → {} records total", 
                      complete_blocks.len(), final_index.total_records());
-            
-            // **RELAXED MEMORY MONITORING**
-            if chunk_count % MEMORY_CHECK_INTERVAL == 0 {
-                if let Some(current_rss_mb) = get_current_memory_usage_mb() {
-                    println!("📊 Memory check: {}MB (should be constant)", current_rss_mb);
-                }
-            }
-            
+    
             // **ADVANCE POSITION**
             current_file_pos += bytes_consumed;
             
@@ -128,13 +111,11 @@ impl IndexingStrategy for ConstantMemoryStrategy {
         }
         
         let final_memory = get_current_memory_usage_mb().unwrap_or(0);
-        println!("🎯 CONSTANT MEMORY STREAMING COMPLETE:");
-        println!("   Chunks: {}", chunk_count);
-        println!("   Blocks: {}", total_blocks_processed);  
-        println!("   Records: {}", final_index.total_records());
-        println!("   Final memory: {}MB (should be ~constant)", final_memory);
-        
-        println!("   ✅ Constant memory streaming successful!");
+        println!("Done.");
+        println!("Chunks: {}", chunk_count);
+        println!("Blocks: {}", total_blocks_processed);  
+        println!("Records: {}", final_index.total_records());
+        println!("Final memory: {}MB", final_memory);
         
         Ok(final_index)
     }
@@ -173,7 +154,7 @@ fn discover_complete_blocks_in_chunk(
         }
         
         let header = &chunk_data[pos..pos + BGZF_HEADER_SIZE];
-        if header[0..2] != [0x1f, 0x8b] {
+        if !is_bgzf_header(header) {
             pos += 1;
             continue;
         }
@@ -181,7 +162,7 @@ fn discover_complete_blocks_in_chunk(
         let bsize = u16::from_le_bytes([header[16], header[17]]) as usize;
         let total_size = bsize + 1;
         
-        if total_size < BGZF_HEADER_SIZE + BGZF_FOOTER_SIZE || total_size > 65536 {
+        if total_size < BGZF_HEADER_SIZE + BGZF_FOOTER_SIZE || total_size > BGZF_BLOCK_MAX_SIZE {
             pos += 1;
             continue;
         }

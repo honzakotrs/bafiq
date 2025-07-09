@@ -16,6 +16,7 @@ mod bgzf;
 mod compression;
 mod index;
 mod query;
+pub mod view;
 
 // Re-export main types for public API
 pub use index::{

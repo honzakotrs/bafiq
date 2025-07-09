@@ -4,7 +4,7 @@
 //! used for performance benchmarking and comparison. These functions are specifically
 //! designed for benchmarking different approaches to BAM file processing.
 
-use crate::index::strategies::shared::extract_flags_from_block_pooled;
+use crate::index::discovery::extract_flags_from_block_pooled;
 use crate::FlagIndex;
 use anyhow::{anyhow, Result};
 use libdeflater::Decompressor;
@@ -16,9 +16,7 @@ use std::ptr;
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 
-const BGZF_BLOCK_MAX_SIZE: usize = 65536;
-const BGZF_HEADER_SIZE: usize = 18;
-const BGZF_FOOTER_SIZE: usize = 8;
+use crate::bgzf::{is_bgzf_header, BGZF_BLOCK_MAX_SIZE, BGZF_FOOTER_SIZE, BGZF_HEADER_SIZE};
 
 /// Information about a BGZF block's location in the file
 #[derive(Debug, Clone)]
@@ -40,7 +38,7 @@ fn discover_all_blocks(data: &[u8]) -> Result<Vec<BlockInfo>> {
         let header = &data[pos..pos + BGZF_HEADER_SIZE];
 
         // Validate GZIP magic
-        if header[0..2] != [0x1f, 0x8b] {
+        if !is_bgzf_header(header) {
             return Err(anyhow!("Invalid GZIP header at position {}", pos));
         }
 
@@ -49,7 +47,7 @@ fn discover_all_blocks(data: &[u8]) -> Result<Vec<BlockInfo>> {
         let total_size = bsize + 1;
 
         // Validate block size
-        if total_size < BGZF_HEADER_SIZE + BGZF_FOOTER_SIZE || total_size > 65536 {
+        if total_size < BGZF_HEADER_SIZE + BGZF_FOOTER_SIZE || total_size > BGZF_BLOCK_MAX_SIZE {
             return Err(anyhow!("Invalid BGZF block size: {}", total_size));
         }
 
@@ -149,7 +147,7 @@ pub fn build_flag_index_low_level(bam_path: &str) -> Result<FlagIndex> {
         let header = &data[pos..pos + BGZF_HEADER_SIZE];
 
         // Validate the GZIP magic bytes.
-        if header[0..2] != [0x1f, 0x8b] {
+        if !is_bgzf_header(header) {
             return Err(anyhow!("Invalid GZIP header in BGZF block"));
         }
 
@@ -158,7 +156,9 @@ pub fn build_flag_index_low_level(bam_path: &str) -> Result<FlagIndex> {
         let total_block_size = bsize + 1;
 
         // Sanity-check the block size.
-        if total_block_size < BGZF_HEADER_SIZE + BGZF_FOOTER_SIZE || total_block_size > 65536 {
+        if total_block_size < BGZF_HEADER_SIZE + BGZF_FOOTER_SIZE
+            || total_block_size > BGZF_BLOCK_MAX_SIZE
+        {
             return Err(anyhow!("Invalid BGZF block size: {}", total_block_size));
         }
         if pos + total_block_size > data.len() {
@@ -217,7 +217,7 @@ pub fn build_flag_index_streaming_parallel(bam_path: &str) -> Result<FlagIndex> 
             let header = &data_producer[pos..pos + BGZF_HEADER_SIZE];
 
             // Validate GZIP magic
-            if header[0..2] != [0x1f, 0x8b] {
+            if !is_bgzf_header(header) {
                 return Err(anyhow!("Invalid GZIP header at position {}", pos));
             }
 
@@ -226,7 +226,8 @@ pub fn build_flag_index_streaming_parallel(bam_path: &str) -> Result<FlagIndex> 
             let total_size = bsize + 1;
 
             // Validate block size
-            if total_size < BGZF_HEADER_SIZE + BGZF_FOOTER_SIZE || total_size > 65536 {
+            if total_size < BGZF_HEADER_SIZE + BGZF_FOOTER_SIZE || total_size > BGZF_BLOCK_MAX_SIZE
+            {
                 return Err(anyhow!("Invalid BGZF block size: {}", total_size));
             }
 
@@ -355,14 +356,15 @@ pub fn count_flags_multithreaded_decompression(
             }
 
             let header = &data_discovery[pos..pos + BGZF_HEADER_SIZE];
-            if header[0..2] != [0x1f, 0x8b] {
+            if !is_bgzf_header(header) {
                 return Err(anyhow!("Invalid GZIP header at position {}", pos));
             }
 
             let bsize = u16::from_le_bytes([header[16], header[17]]) as usize;
             let total_size = bsize + 1;
 
-            if total_size < BGZF_HEADER_SIZE + BGZF_FOOTER_SIZE || total_size > 65536 {
+            if total_size < BGZF_HEADER_SIZE + BGZF_FOOTER_SIZE || total_size > BGZF_BLOCK_MAX_SIZE
+            {
                 return Err(anyhow!("Invalid BGZF block size: {}", total_size));
             }
 
@@ -534,11 +536,6 @@ pub fn count_flags_libdeflate_thread_pool(
 
     Ok(total_count)
 }
-
-// Helper functions
-
-// PERFORMANCE NOTE: extract_flags_from_block removed from benchmark module too!
-// All benchmarks now use extract_flags_from_block_pooled with optimizations
 
 fn count_flags_in_decompressed_block(
     decompressed_data: &[u8],

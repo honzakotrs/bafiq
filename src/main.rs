@@ -1,38 +1,12 @@
 use anyhow::{anyhow, Result};
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Parser, Subcommand};
 use rayon::ThreadPoolBuilder;
 use rust_htslib::bam::{Format, Read as BamRead, Writer};
 use std::path::{Path, PathBuf};
 
-use bafiq::{BuildStrategy, IndexBuilder, IndexManager, SerializableIndex};
-
-/// CLI-friendly strategy names that map to BuildStrategy
-#[derive(Debug, Clone, ValueEnum)]
-pub enum CliStrategy {
-    /// Channel-based producer-consumer - crossbeam channels architecture (2.127s)
-    #[value(name = "channel-producer-consumer")]
-    ChannelProducerConsumer,
-    /// Work-stealing processing - fastest performing approach (1.427s)
-    #[value(name = "work-stealing")]
-    WorkStealing,
-    /// constant-memory processing - constant RAM footprint for any file size
-    #[value(name = "constant-memory")]
-    ConstantMemory,
-    /// Adaptive memory-mapped streaming - best of both worlds (performance + memory efficiency)
-    #[value(name = "adaptive-memory-mapped")]
-    AdaptiveMemoryMapped,
-}
-
-impl From<CliStrategy> for BuildStrategy {
-    fn from(cli_strategy: CliStrategy) -> Self {
-        match cli_strategy {
-            CliStrategy::ChannelProducerConsumer => BuildStrategy::ChannelProducerConsumer,
-            CliStrategy::WorkStealing => BuildStrategy::WorkStealing,
-            CliStrategy::ConstantMemory => BuildStrategy::ConstantMemory,
-            CliStrategy::AdaptiveMemoryMapped => BuildStrategy::AdaptiveMemoryMapped,
-        }
-    }
-}
+use bafiq::{
+    view::fast_count::scan_count, BuildStrategy, IndexBuilder, IndexManager, SerializableIndex,
+};
 
 /// Parse flag values supporting hex (0x4), decimal (4), and binary (0b100) formats like samtools
 fn parse_flag_value(flag_str: &str) -> Result<u16> {
@@ -260,7 +234,7 @@ pub struct IndexArgs {
         default_value = "work-stealing",
         help = "Index building strategy to use (default: work-stealing for maximum performance)"
     )]
-    pub strategy: CliStrategy,
+    pub strategy: BuildStrategy,
 
     /// Enable index compression (slower build, smaller files)
     #[arg(
@@ -390,7 +364,7 @@ fn cmd_index(args: IndexArgs) -> Result<()> {
             .to_str()
             .ok_or_else(|| anyhow!("Invalid file path"))?;
 
-        eprintln!("🔄 Force rebuilding index...");
+        eprintln!("Force rebuilding index...");
         let uncompressed_index = builder.build(input_str)?;
 
         // Create and save serializable index
@@ -584,8 +558,7 @@ fn cmd_fast_count(input: PathBuf, flags: FlagFilter, threads: Option<usize>) -> 
     eprintln!("   Forbidden flags: 0x{:x}", forbidden_flags);
 
     let start = std::time::Instant::now();
-    let count =
-        IndexBuilder::new().scan_count(input_str, required_flags, forbidden_flags, threads)?;
+    let count = scan_count(input_str, required_flags, forbidden_flags, threads)?;
     let scan_time = start.elapsed();
 
     println!("{}", count);

@@ -6,9 +6,10 @@ use memmap2::Mmap;
 use std::fs::File;
 use std::sync::Arc;
 
-use super::shared::extract_flags_from_block_pooled;
-use super::{IndexingStrategy, BGZF_BLOCK_MAX_SIZE, BGZF_FOOTER_SIZE, BGZF_HEADER_SIZE};
+use crate::index::discovery::extract_flags_from_block_pooled;
+use super::{IndexingStrategy};
 use crate::FlagIndex;
+use crate::bgzf::{is_bgzf_header, BGZF_BLOCK_MAX_SIZE, BGZF_FOOTER_SIZE, BGZF_HEADER_SIZE};
 
 pub struct ChannelProducerConsumerStrategy;
 
@@ -37,7 +38,7 @@ impl IndexingStrategy for ChannelProducerConsumerStrategy {
                     let header = &data_producer[pos..pos + BGZF_HEADER_SIZE];
                     
                     // Validate GZIP magic
-                    if header[0..2] != [0x1f, 0x8b] {
+                    if !is_bgzf_header(header) {
                         eprintln!("Invalid GZIP header at position {}", pos);
                         break;
                     }
@@ -47,7 +48,7 @@ impl IndexingStrategy for ChannelProducerConsumerStrategy {
                     let total_size = bsize + 1;
                     
                     // Validate block size
-                    if total_size < BGZF_HEADER_SIZE + BGZF_FOOTER_SIZE || total_size > 65536 {
+                    if total_size < BGZF_HEADER_SIZE + BGZF_FOOTER_SIZE || total_size > BGZF_BLOCK_MAX_SIZE {
                         eprintln!("Invalid BGZF block size: {}", total_size);
                         break;
                     }
