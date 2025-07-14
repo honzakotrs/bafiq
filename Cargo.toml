@@ -1,10 +1,10 @@
 [package]
 name = "bafiq"
-version = "0.0.5"
-edition = "2021"
+version = "1.0.0"
+edition = "2024"
 license = "MIT"
 description = "Fast BAM flag indexing and querying"
-repository = "https://github.com/honza/bafiq"
+repository = "https://github.com/honzakotrs/bafiq"
 
 [[bin]]
 name = "bafiq"
