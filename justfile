@@ -21,7 +21,7 @@ bench:
         MAX_CORES=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo "4")
         
         # Define thread counts to test (default: 1,2, override with BENCH_THREADS env var)
-        THREADS="${BENCH_THREADS:-1,2}"
+        THREADS="${BENCH_THREADS:-2,max}"
         
         # Replace "max" with actual core count
         THREADS=$(echo "$THREADS" | sed "s/max/$MAX_CORES/g")
@@ -35,6 +35,7 @@ bench:
         echo "   Override threads: BENCH_THREADS=\"1,2,4,8,$MAX_CORES\" just bench"
         echo "   Use auto threads: BENCH_THREADS=\"auto\" just bench (no --threads/-@ parameters)"
         echo "   Show memory plots: MEM_PLOTS=1 just bench"
+        echo "   Keep temp files: KEEP_TEMP_FILES=1 just bench"
         echo "   Both bafiq and samtools use explicit --threads/-@ for fair comparison"
         
         # Get original BAM size
@@ -63,6 +64,38 @@ bench:
         
         # Temporary file for collecting all results
         TEMP_RESULTS=$(mktemp)
+        
+        # Create temporary files for tool outputs
+        SAMTOOLS_LOG=$(mktemp)
+        BAFIQ_LOG=$(mktemp)
+        BAFIQ_FASTCOUNT_LOG=$(mktemp)
+        
+        # Function to format memory display (MB for sub-GB, GB for 1GB+)
+        format_memory() {
+            local memory_mb=$1
+            if [ $(echo "$memory_mb >= 1024" | bc -l 2>/dev/null) -eq 1 ]; then
+                local memory_gb=$(echo "scale=1; $memory_mb / 1024" | bc -l 2>/dev/null || echo "0.0")
+                echo "${memory_gb}GB"
+            else
+                local memory_mb_rounded=$(echo "scale=0; $memory_mb" | bc -l 2>/dev/null || echo "0")
+                echo "${memory_mb_rounded}MB"
+            fi
+        }
+        
+        # Set up cleanup trap to ensure temporary files are removed
+        cleanup_bench_files() {
+            if [ "${KEEP_TEMP_FILES:-0}" = "1" ]; then
+                echo "   Temp files preserved for manual inspection:"
+                echo "     Results: $TEMP_RESULTS"
+                echo "     Samtools log: $SAMTOOLS_LOG"
+                echo "     Bafiq log: $BAFIQ_LOG"
+                echo "     Bafiq fast-count log: $BAFIQ_FASTCOUNT_LOG"
+                echo "   (Set KEEP_TEMP_FILES=0 to clean up automatically)"
+            else
+                rm -f "$TEMP_RESULTS" "$SAMTOOLS_LOG" "$BAFIQ_LOG" "$BAFIQ_FASTCOUNT_LOG"
+            fi
+        }
+        trap cleanup_bench_files EXIT
         
         # Function to monitor memory usage
         monitor_memory() {
@@ -122,7 +155,7 @@ bench:
                     # Run samtools view -c with explicit thread count or auto
                     if [ "$thread_count" = "auto" ]; then
                         echo "Running monitored benchmark: $strategy (auto threads, no -@ parameter)"
-                        samtools view -c "$BAFIQ_TEST_BAM" > /tmp/samtools_output.log 2>&1 &
+                        samtools view -c "$BAFIQ_TEST_BAM" > "$SAMTOOLS_LOG" 2>&1 &
                         BENCHMARK_PID=$!
                     else
                         # Note: samtools -@ specifies additional threads, so for total thread_count we use (thread_count - 1)
@@ -131,18 +164,18 @@ bench:
                             SAMTOOLS_THREADS=0
                         fi
                         echo "Running monitored benchmark: $strategy (${thread_count} threads total, -@ ${SAMTOOLS_THREADS})"
-                        samtools view -@ "$SAMTOOLS_THREADS" -c "$BAFIQ_TEST_BAM" > /tmp/samtools_output.log 2>&1 &
+                        samtools view -@ "$SAMTOOLS_THREADS" -c "$BAFIQ_TEST_BAM" > "$SAMTOOLS_LOG" 2>&1 &
                         BENCHMARK_PID=$!
                     fi
                 elif [ "$strategy" = "bafiq-fast-count" ]; then
                     # Run bafiq fast-count - direct comparison to samtools view -c
                     if [ "$thread_count" = "auto" ]; then
                         echo "Running monitored benchmark: $strategy (auto threads, no --threads parameter)"
-                        ./target/release/bafiq fast-count "$BAFIQ_TEST_BAM" > /tmp/bafiq_fastcount_output.log 2>&1 &
+                        ./target/release/bafiq fast-count "$BAFIQ_TEST_BAM" > "$BAFIQ_FASTCOUNT_LOG" 2>&1 &
                         BENCHMARK_PID=$!
                     else
                         echo "Running monitored benchmark: $strategy (${thread_count} threads, no index building)"
-                        ./target/release/bafiq --threads "$thread_count" fast-count "$BAFIQ_TEST_BAM" > /tmp/bafiq_fastcount_output.log 2>&1 &
+                        ./target/release/bafiq --threads "$thread_count" fast-count "$BAFIQ_TEST_BAM" > "$BAFIQ_FASTCOUNT_LOG" 2>&1 &
                         BENCHMARK_PID=$!
                     fi
                 else
@@ -155,11 +188,11 @@ bench:
                     # Run bafiq with explicit thread count or auto
                     if [ "$thread_count" = "auto" ]; then
                         echo "Running monitored benchmark: $strategy (auto threads, no --threads parameter)"
-                        ./target/release/bafiq index --strategy "$CLI_STRATEGY" "$BAFIQ_TEST_BAM" > /tmp/bafiq_output.log 2>&1 &
+                        ./target/release/bafiq index --strategy "$CLI_STRATEGY" "$BAFIQ_TEST_BAM" > "$BAFIQ_LOG" 2>&1 &
                         BENCHMARK_PID=$!
                     else
                         echo "Running monitored benchmark: $strategy (${thread_count} threads)"
-                        ./target/release/bafiq --threads "$thread_count" index --strategy "$CLI_STRATEGY" "$BAFIQ_TEST_BAM" > /tmp/bafiq_output.log 2>&1 &
+                        ./target/release/bafiq --threads "$thread_count" index --strategy "$CLI_STRATEGY" "$BAFIQ_TEST_BAM" > "$BAFIQ_LOG" 2>&1 &
                         BENCHMARK_PID=$!
                     fi
                 fi
@@ -180,11 +213,11 @@ bench:
                     if [ "$strategy" = "samtools" ]; then
                         INDEX_SIZE_MB="N/A"
                         # Get record count from samtools output
-                        SAMTOOLS_RECORDS=$(cat /tmp/samtools_output.log 2>/dev/null || echo "0")
+                        SAMTOOLS_RECORDS=$(cat "$SAMTOOLS_LOG" 2>/dev/null || echo "0")
                     elif [ "$strategy" = "bafiq-fast-count" ]; then
                         INDEX_SIZE_MB="N/A"
                         # Get record count from bafiq fast-count output
-                        BAFIQ_FASTCOUNT_RECORDS=$(cat /tmp/bafiq_fastcount_output.log 2>/dev/null || echo "0")
+                        BAFIQ_FASTCOUNT_RECORDS=$(cat "$BAFIQ_FASTCOUNT_LOG" 2>/dev/null || echo "0")
                     else
                         if [ -f "${BAFIQ_TEST_BAM}.bfi" ]; then
                             INDEX_SIZE=$(stat -f%z "${BAFIQ_TEST_BAM}.bfi" 2>/dev/null || stat -c%s "${BAFIQ_TEST_BAM}.bfi" 2>/dev/null || echo "0")
@@ -210,6 +243,7 @@ bench:
                     fi
                     
                     PEAK_MEMORY_GB=$(echo "scale=1; $PEAK_MEMORY / 1024" | bc -l 2>/dev/null || echo "0.0")
+                    PEAK_MEMORY_FORMATTED=$(format_memory "$PEAK_MEMORY")
                     
                     # Convert N/A to 0.0 for CSV
                     CSV_INDEX_SIZE=$([ "$INDEX_SIZE_MB" = "N/A" ] && echo "0.0" || echo "$INDEX_SIZE_MB")
@@ -227,20 +261,20 @@ bench:
                     echo "$thread_count,$strategy,$DURATION_SEC,$PEAK_MEMORY_GB,$AVG_MEMORY,$PEAK_CPU,$AVG_CPU,$INDEX_SIZE_MB" >> "$TEMP_RESULTS"
                     
                     if [ "$strategy" = "samtools" ]; then
-                        echo "   Time: ${DURATION_SEC}s, Peak Memory: ${PEAK_MEMORY_GB}GB, Avg CPU: ${AVG_CPU}%, Records: $SAMTOOLS_RECORDS"
+                        echo "   Time: ${DURATION_SEC}s, Peak Memory: ${PEAK_MEMORY_FORMATTED}, Avg CPU: ${AVG_CPU}%, Records: $SAMTOOLS_RECORDS"
                     elif [ "$strategy" = "bafiq-fast-count" ]; then
-                        echo "   Time: ${DURATION_SEC}s, Peak Memory: ${PEAK_MEMORY_GB}GB, Avg CPU: ${AVG_CPU}%, Records: $BAFIQ_FASTCOUNT_RECORDS"
+                        echo "   Time: ${DURATION_SEC}s, Peak Memory: ${PEAK_MEMORY_FORMATTED}, Avg CPU: ${AVG_CPU}%, Records: $BAFIQ_FASTCOUNT_RECORDS"
                     else
-                        echo "   Time: ${DURATION_SEC}s, Peak Memory: ${PEAK_MEMORY_GB}GB, Avg CPU: ${AVG_CPU}%"
+                        echo "   Time: ${DURATION_SEC}s, Peak Memory: ${PEAK_MEMORY_FORMATTED}, Avg CPU: ${AVG_CPU}%"
                     fi
                 else
                     echo "   FAILED"
                     if [ "$strategy" = "samtools" ]; then
-                        cat /tmp/samtools_output.log
+                        cat "$SAMTOOLS_LOG"
                     elif [ "$strategy" = "bafiq-fast-count" ]; then
-                        cat /tmp/bafiq_fastcount_output.log
+                        cat "$BAFIQ_FASTCOUNT_LOG"
                     else
-                        cat /tmp/bafiq_output.log
+                        cat "$BAFIQ_LOG"
                     fi
                 fi
                 
@@ -354,9 +388,12 @@ bench:
         echo "------------------------------------------------------------------------------------------------------------------------"
         
         while IFS=',' read -r threads strategy time_sec peak_mem_gb avg_mem_mb peak_cpu avg_cpu index_size_mb; do
-            AVG_MEM_GB=$(echo "scale=1; $avg_mem_mb / 1024" | bc -l 2>/dev/null || echo "0.0")
+            # Convert back to MB for formatting
+            PEAK_MEM_MB=$(echo "scale=1; $peak_mem_gb * 1024" | bc -l 2>/dev/null || echo "0.0")
+            PEAK_MEM_FORMATTED=$(format_memory "$PEAK_MEM_MB")
+            AVG_MEM_FORMATTED=$(format_memory "$avg_mem_mb")
             printf "%-25s %-8s %-8s %-10s %-10s %-8s %-8s %-12s\n" \
-                "$strategy" "${threads}t" "${time_sec}s" "${peak_mem_gb}GB" "${AVG_MEM_GB}GB" "${peak_cpu}%" "${avg_cpu}%" "${index_size_mb}MB"
+                "$strategy" "${threads}t" "${time_sec}s" "$PEAK_MEM_FORMATTED" "$AVG_MEM_FORMATTED" "${peak_cpu}%" "${avg_cpu}%" "${index_size_mb}MB"
         done < "$TEMP_RESULTS"
         
         echo "========================================================================================================================"
@@ -459,8 +496,7 @@ bench:
         echo "Tip: Use the detailed memory CSV to reconstruct memory usage over time"
         echo "Thread scaling benchmarks completed successfully"
         
-        # Clean up
-        rm -f "$TEMP_RESULTS"
+        # Cleanup (or preservation) happens automatically via trap
     fi
 
 # Run comprehensive index build benchmarks with detailed Criterion analysis
@@ -517,6 +553,18 @@ bench-view:
         # Define flags to test (default: 0x4 unmapped bit, override with BAFIQ_FLAGS)
         FLAGS="${BAFIQ_FLAGS:-0x4}"
         
+        # Function to format memory display (MB for sub-GB, GB for 1GB+)
+        format_memory() {
+            local memory_mb=$1
+            if [ $(echo "$memory_mb >= 1024" | bc -l 2>/dev/null) -eq 1 ]; then
+                local memory_gb=$(echo "scale=1; $memory_mb / 1024" | bc -l 2>/dev/null || echo "0.0")
+                echo "${memory_gb}GB"
+            else
+                local memory_mb_rounded=$(echo "scale=0; $memory_mb" | bc -l 2>/dev/null || echo "0")
+                echo "${memory_mb_rounded}MB"
+            fi
+        }
+        
         echo "Running comprehensive view performance benchmark with monitoring..."
         echo "View Performance Benchmarking parameters:"
         echo "   BAM files: $SOURCE_BAMS"
@@ -532,6 +580,7 @@ bench-view:
         echo "   Multiple BAMs: BAFIQ_SOURCE_BAMS=\"chr1.bam,x.bam\" just bench-view"
         echo "   Multiple flags: BAFIQ_FLAGS=\"0x4,0x2,0x10\" just bench-view"
         echo "   Custom flags: BAFIQ_FLAGS=\"0x100,0x200,0x400\" just bench-view"
+        echo "   Keep temp files: KEEP_TEMP_FILES=1 just bench-view"
         
         # Validate BAM files existence before starting
         for bam_file in "${BAM_ARRAY[@]}"; do
@@ -826,6 +875,7 @@ bench-view:
                     fi
                     
                     PEAK_MEMORY_GB=$(echo "scale=1; $PEAK_MEMORY / 1024" | bc -l 2>/dev/null || echo "0.0")
+                    PEAK_MEMORY_FORMATTED=$(format_memory "$PEAK_MEMORY")
                     
                         # Count output lines and reads
                         case "$strategy" in
@@ -855,7 +905,7 @@ bench-view:
                             echo "$(basename "$bam_file"),$flag,$CSV_THREADS,$strategy,$DURATION_SEC,$PEAK_MEMORY_GB,$AVG_MEMORY,$PEAK_CPU,$AVG_CPU,$INDEX_SIZE_MB,$OUTPUT_LINES,$READS_FOUND" >> "$TEMP_RESULTS"
                         fi
                     
-                    echo "   Time: ${DURATION_SEC}s, Peak Memory: ${PEAK_MEMORY_GB}GB, Avg CPU: ${AVG_CPU}%, Reads: $READS_FOUND"
+                    echo "   Time: ${DURATION_SEC}s, Peak Memory: ${PEAK_MEMORY_FORMATTED}, Avg CPU: ${AVG_CPU}%, Reads: $READS_FOUND"
                 else
                     echo "   FAILED"
                 fi
@@ -930,18 +980,24 @@ bench-view:
             echo "----------------------------------------------------------------"
             
             while IFS=',' read -r bam_file flag strategy time_sec peak_mem_gb avg_mem_mb peak_cpu avg_cpu index_size_mb output_lines reads_found; do
-                AVG_MEM_GB=$(echo "scale=1; $avg_mem_mb / 1024" | bc -l 2>/dev/null || echo "0.0")
+                # Convert back to MB for formatting
+                PEAK_MEM_MB=$(echo "scale=1; $peak_mem_gb * 1024" | bc -l 2>/dev/null || echo "0.0")
+                PEAK_MEM_FORMATTED=$(format_memory "$PEAK_MEM_MB")
+                AVG_MEM_FORMATTED=$(format_memory "$avg_mem_mb")
                 printf "%-20s %-15s %-10s %-10s %-10s %-10s %-10s\n" \
-                    "$bam_file" "$flag" "$strategy" "${time_sec}s" "${peak_mem_gb}GB" "${AVG_MEM_GB}GB" "${peak_cpu}%"
+                    "$bam_file" "$flag" "$strategy" "${time_sec}s" "$PEAK_MEM_FORMATTED" "$AVG_MEM_FORMATTED" "${peak_cpu}%"
             done < "$TEMP_RESULTS"
         else
             printf "%-20s %-15s %-10s %-10s %-10s %-10s %-10s %-10s\n" "BAM File" "Flag" "Threads" "Tool" "Time" "Peak RAM" "Avg RAM" "Peak CPU"
             echo "----------------------------------------------------------------"
             
             while IFS=',' read -r bam_file flag threads strategy time_sec peak_mem_gb avg_mem_mb peak_cpu avg_cpu index_size_mb output_lines reads_found; do
-                AVG_MEM_GB=$(echo "scale=1; $avg_mem_mb / 1024" | bc -l 2>/dev/null || echo "0.0")
+                # Convert back to MB for formatting
+                PEAK_MEM_MB=$(echo "scale=1; $peak_mem_gb * 1024" | bc -l 2>/dev/null || echo "0.0")
+                PEAK_MEM_FORMATTED=$(format_memory "$PEAK_MEM_MB")
+                AVG_MEM_FORMATTED=$(format_memory "$avg_mem_mb")
                 printf "%-20s %-15s %-10s %-10s %-10s %-10s %-10s %-10s\n" \
-                    "$bam_file" "$flag" "$threads" "$strategy" "${time_sec}s" "${peak_mem_gb}GB" "${AVG_MEM_GB}GB" "${peak_cpu}%"
+                    "$bam_file" "$flag" "$threads" "$strategy" "${time_sec}s" "$PEAK_MEM_FORMATTED" "$AVG_MEM_FORMATTED" "${peak_cpu}%"
             done < "$TEMP_RESULTS"
         fi
         
@@ -1032,8 +1088,8 @@ bench-view:
                 EFFICIENT_FLAG=$(echo "$MOST_EFFICIENT" | cut -d, -f2)
                 EFFICIENT_STRATEGY=$(echo "$MOST_EFFICIENT" | cut -d, -f3)
                 EFFICIENT_MEM=$(echo "$MOST_EFFICIENT" | cut -d, -f5)
-                EFFICIENT_MEM_GB=$(echo "scale=1; $EFFICIENT_MEM / 1024" | bc -l 2>/dev/null || echo "0.0")
-                echo "   Most memory efficient: $EFFICIENT_STRATEGY ($EFFICIENT_BAM, $EFFICIENT_FLAG) - ${EFFICIENT_MEM_GB}GB peak"
+                EFFICIENT_MEM_FORMATTED=$(format_memory "$EFFICIENT_MEM")
+                echo "   Most memory efficient: $EFFICIENT_STRATEGY ($EFFICIENT_BAM, $EFFICIENT_FLAG) - ${EFFICIENT_MEM_FORMATTED} peak"
             fi
         else
             MOST_EFFICIENT=$(tail -n +2 "$COMBINED_CSV" | sort -t, -k6 -n | head -1)
@@ -1042,8 +1098,8 @@ bench-view:
                 EFFICIENT_FLAG=$(echo "$MOST_EFFICIENT" | cut -d, -f2)
                 EFFICIENT_STRATEGY=$(echo "$MOST_EFFICIENT" | cut -d, -f4)
                 EFFICIENT_MEM=$(echo "$MOST_EFFICIENT" | cut -d, -f6)
-                EFFICIENT_MEM_GB=$(echo "scale=1; $EFFICIENT_MEM / 1024" | bc -l 2>/dev/null || echo "0.0")
-                echo "   Most memory efficient: $EFFICIENT_STRATEGY ($EFFICIENT_BAM, $EFFICIENT_FLAG) - ${EFFICIENT_MEM_GB}GB peak"
+                EFFICIENT_MEM_FORMATTED=$(format_memory "$EFFICIENT_MEM")
+                echo "   Most memory efficient: $EFFICIENT_STRATEGY ($EFFICIENT_BAM, $EFFICIENT_FLAG) - ${EFFICIENT_MEM_FORMATTED} peak"
             fi
         fi
         
@@ -1112,9 +1168,15 @@ bench-view:
         # Clean up temporary files
         rm -f "$TEMP_RESULTS"
         
-        # Keep temp directory for manual inspection
-        trap - EXIT
-        echo "   (Directory preserved for manual inspection)"
+        # Conditionally preserve temp directory for manual inspection
+        if [ "${KEEP_TEMP_FILES:-0}" = "1" ]; then
+            trap - EXIT
+            echo "   Temp directory preserved for manual inspection: $TEMP_DIR"
+            echo "   (Set KEEP_TEMP_FILES=0 to clean up automatically)"
+        else
+            echo "   Cleaning up temporary files..."
+            echo "   (Set KEEP_TEMP_FILES=1 to preserve temp directory for manual inspection)"
+        fi
         echo ""
         echo "Use CSV files with plotting tools (same format as 'just bench')"
     fi
