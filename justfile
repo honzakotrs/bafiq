@@ -511,12 +511,12 @@ clean:
 # Run index benchmarks with Rust-style arguments (replaces old bench command)
 bench-index *ARGS:
     #!/usr/bin/env bash
-    echo "Building index benchmark..."
-    cargo bench --bench index --no-run
-    echo "Running benchmark with arguments: {{ARGS}}"
-    BENCH_PATH=$(cargo bench --bench index --no-run 2>&1 | grep "Executable" | sed 's/.*(\(.*\))/\1/')
+    echo "Building unified benchmark..."
+    cargo bench --bench unified --no-run
+    echo "Running index benchmark with arguments: {{ARGS}}"
+    BENCH_PATH=$(cargo bench --bench unified --no-run 2>&1 | grep "Executable" | sed 's/.*(\(.*\))/\1/')
     if [ -n "$BENCH_PATH" ] && [ -f "$BENCH_PATH" ]; then
-        "$BENCH_PATH" {{ARGS}}
+        "$BENCH_PATH" index {{ARGS}}
     else
         echo "❌ Could not find benchmark executable at: $BENCH_PATH"
         exit 1
@@ -525,12 +525,12 @@ bench-index *ARGS:
 # Run view benchmarks with Rust-style arguments
 bench-view *ARGS:
     #!/usr/bin/env bash
-    echo "Building view benchmark..."
-    cargo bench --bench view --no-run
-    echo "Running benchmark with arguments: {{ARGS}}"
-    BENCH_PATH=$(cargo bench --bench view --no-run 2>&1 | grep "Executable" | sed 's/.*(\(.*\))/\1/')
+    echo "Building unified benchmark..."
+    cargo bench --bench unified --no-run
+    echo "Running view benchmark with arguments: {{ARGS}}"
+    BENCH_PATH=$(cargo bench --bench unified --no-run 2>&1 | grep "Executable" | sed 's/.*(\(.*\))/\1/')
     if [ -n "$BENCH_PATH" ] && [ -f "$BENCH_PATH" ]; then
-        "$BENCH_PATH" {{ARGS}}
+        "$BENCH_PATH" view {{ARGS}}
     else
         echo "❌ Could not find benchmark executable at: $BENCH_PATH"
         exit 1

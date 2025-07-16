@@ -1,29 +1,15 @@
 use anyhow::Result;
-use clap::Parser;
 use std::process::Command;
 
-use bafiq::BuildStrategy;
-
-mod shared;
-use shared::{
+use crate::shared::{
     BAFIQ_FAST_COUNT, BenchmarkCommand, BenchmarkOrchestrator, BenchmarkSuite, SAMTOOLS,
     VerificationResult,
     analysis::BenchmarkResult,
     commands::{create_bafiq_command, extract_record_count_from_output, run_with_monitoring},
 };
+use bafiq::BuildStrategy;
 
-/// Index benchmark CLI arguments
-#[derive(Parser, Debug)]
-#[command(name = "index_build_bench")]
-#[command(about = "Bafiq index building benchmark with thread scaling")]
-struct IndexBenchArgs {
-    #[command(flatten)]
-    common: shared::orchestrator::BenchmarkArgs,
-
-    /// BAM file to benchmark (required)
-    #[arg(long)]
-    bam: String,
-}
+use super::cli::IndexBenchArgs;
 
 /// Index building command that implements BenchmarkCommand
 struct IndexBuildCommand {
@@ -121,7 +107,7 @@ impl BenchmarkCommand for FastCountCommand {
     }
 }
 
-/// Samtools comparison command that implements BenchmarkCommand
+/// Samtools comparison command that implements BenchmarkCommand  
 struct SamtoolsCommand {
     bam_path: String,
 }
@@ -238,31 +224,22 @@ impl BenchmarkSuite for IndexBenchmarkSuite {
     }
 }
 
-fn main() {
-    // Parse CLI arguments to get BAM file
-    let args = IndexBenchArgs::parse();
-
+/// Run index benchmark with provided arguments
+pub fn run_index_benchmark(index_args: IndexBenchArgs) -> Result<()> {
     // Create configuration from parsed args
-    let config = match BenchmarkOrchestrator::create_config_from_args(&args.common) {
-        Ok(config) => config,
-        Err(e) => {
-            eprintln!("Error: Configuration error: {}", e);
-            std::process::exit(1);
-        }
-    };
+    let config = BenchmarkOrchestrator::create_config_from_args(&index_args.common)?;
 
     // Create and run the index benchmark suite
-    let suite = Box::new(IndexBenchmarkSuite { bam_path: args.bam });
+    let suite = Box::new(IndexBenchmarkSuite {
+        bam_path: index_args.bam,
+    });
 
     // Create orchestrator with the parsed configuration
     let orchestrator = BenchmarkOrchestrator::with_config(config);
 
-    println!("Running benchmarks...");
-    match orchestrator.run_suite(suite) {
-        Ok(()) => println!("\nBenchmarks completed successfully"),
-        Err(e) => {
-            eprintln!("Error: Benchmarks failed: {}", e);
-            std::process::exit(1);
-        }
-    }
+    println!("Running index benchmarks...");
+    orchestrator.run_suite(suite)?;
+    println!("\nIndex benchmarks completed successfully");
+
+    Ok(())
 }
