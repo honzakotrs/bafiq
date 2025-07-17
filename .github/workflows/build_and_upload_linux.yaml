@@ -18,7 +18,7 @@ jobs:
       actions: read # Required to download artifacts
     steps:
       # 1) Check out the repository
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       # 2) Set up the Rust toolchain (stable)
       - name: Set up Rust
@@ -109,21 +109,21 @@ jobs:
       # 10) Upload workflow artifacts (backup/fallback)
       - name: Upload bafiq binary
         if: steps.check_tag.outputs.exists == 'true' && github.event.inputs.force_release != 'true'
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: bafiq-linux
           path: target/release/bafiq
 
       - name: Upload viewer binary
         if: steps.check_tag.outputs.exists == 'true' && github.event.inputs.force_release != 'true'
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: viewer-linux
           path: target/release/viewer
 
       - name: Upload unified benchmark binary
         if: steps.check_tag.outputs.exists == 'true' && github.event.inputs.force_release != 'true'
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: unified-benchmark-linux
           path: target/release/unified-benchmark
