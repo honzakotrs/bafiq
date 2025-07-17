@@ -36,19 +36,36 @@ Then use the project's built-in commands:
 # Build the project (handles macOS setup automatically)
 just build
 
-# Run `bafiq index` benchmark with different indexing strategies
-# alongside `bafiq fast-scan` and `samtools -c`
-# it repeats the run for each number of threads
-
-BENCH_THREADS="2,max" BAFIQ_TEST_BAM=/my.bam just bench
-
-# Run `bafiq view` benchmark; will run for each combination of values of set env
-# variables, comma separated
-
-BENCH_THREADS="2,max" BAFIQ_FLAGS="0x4,0x10,0x2" BAFIQ_SOURCE_BAMS="hg38.chr22.bam,chr1.bam" just bench-view
-
 # See all available commands
 just help
+```
+
+## Benchmarking
+
+Run comprehensive benchmarks with statistical analysis:
+
+```bash
+# Index building benchmarks (multiple strategies vs samtools)
+just bench-index --bam my.bam --threads 2,4,8 --samples 5 --clear-cache
+
+# View operation benchmarks (bafiq vs samtools)  
+just bench-view --bam my.bam --flags 0x4,0x2 --threads 2,4 --samples 3
+
+# Get help for specific benchmark types
+just bench-index --help
+just bench-view --help
+```
+
+## Legacy Commands
+
+For backwards compatibility, environment variable-based commands are available:
+
+```bash
+# Legacy index benchmarks 
+BENCH_THREADS="2,max" BAFIQ_TEST_BAM=/my.bam just bench-index-orig
+
+# Legacy view benchmarks (supports multiple combinations)
+BENCH_THREADS="2,max" BAFIQ_FLAGS="0x4,0x10,0x2" BAFIQ_SOURCE_BAMS="hg38.chr22.bam,chr1.bam" just bench-view-orig
 ```
 
 ## Manual Build
