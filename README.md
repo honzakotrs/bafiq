@@ -25,6 +25,7 @@ bafiq view -f 0x4 -F 0x400 my.bam | samtools view -bS -o unmapped-no-dup.bam
 ## Quick Start (Recommended)
 
 Install [`just`](https://github.com/casey/just) for the best development experience:
+
 ```bash
 cargo install just
 ```
