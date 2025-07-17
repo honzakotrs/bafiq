@@ -1,12 +1,21 @@
-name: Build bafiq (Linux)
+name: Build and Release bafiq (Linux)
 
 on:
   # Allows manual triggering from the "Actions" tab in GitHub
   workflow_dispatch:
+    inputs:
+      force_release:
+        description: "Force release even if tag exists"
+        required: false
+        default: false
+        type: boolean
 
 jobs:
   build-linux:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # Required to create releases and push tags
+      actions: read # Required to download artifacts
     steps:
       # 1) Check out the repository
       - uses: actions/checkout@v3
@@ -21,13 +30,100 @@ jobs:
         #   toolchain: stable
         #   override: true
 
-      # 3) Build the project in release mode
+      # 3) Build the project and benchmarks in release mode
       - name: Build bafiq
         run: cargo build --release
 
-      # 4) Upload the compiled binary as an artifact
-      - name: Upload artifact
+      - name: Build benchmarks
+        run: cargo build --release --benches
+
+      # 4) Copy benchmark binary to predictable name
+      - name: Copy unified benchmark
+        run: |
+          # Find the unified benchmark executable and copy it to a known name
+          find target/release/deps -name "unified-*" -type f -executable | head -1 | xargs -I {} cp {} target/release/unified-benchmark
+
+      # 5) Extract version from Cargo.toml
+      - name: Extract version
+        id: extract_version
+        run: |
+          VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          echo "version=v$VERSION" >> $GITHUB_OUTPUT
+          echo "Version: v$VERSION"
+
+      # 6) Check if tag already exists
+      - name: Check if tag exists
+        id: check_tag
+        run: |
+          if git rev-parse ${{ steps.extract_version.outputs.version }} >/dev/null 2>&1; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "Tag ${{ steps.extract_version.outputs.version }} already exists"
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "Tag ${{ steps.extract_version.outputs.version }} does not exist"
+          fi
+
+      # 7) Create and push git tag
+      - name: Create git tag
+        if: steps.check_tag.outputs.exists == 'false' || github.event.inputs.force_release == 'true'
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git tag ${{ steps.extract_version.outputs.version }}
+          git push origin ${{ steps.extract_version.outputs.version }}
+
+      # 8) Create GitHub Release with all binaries
+      - name: Create Release
+        if: steps.check_tag.outputs.exists == 'false' || github.event.inputs.force_release == 'true'
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.extract_version.outputs.version }}
+          name: Release ${{ steps.extract_version.outputs.version }}
+          body: |
+            ## Bafiq Release ${{ steps.extract_version.outputs.version }}
+
+            This release includes:
+            - `bafiq` - Main CLI tool for BAM flag indexing and querying
+            - `viewer` - BAM file viewer utility  
+            - `unified-benchmark` - Comprehensive benchmark suite
+
+            ### Download the appropriate binary for your system:
+            - **bafiq-linux** - Main tool (Linux x86_64)
+            - **viewer-linux** - Viewer utility (Linux x86_64)
+            - **unified-benchmark-linux** - Benchmark suite (Linux x86_64)
+          files: |
+            target/release/bafiq
+            target/release/viewer
+            target/release/unified-benchmark
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # 9) Notify if release was skipped
+      - name: Release skipped
+        if: steps.check_tag.outputs.exists == 'true' && github.event.inputs.force_release != 'true'
+        run: |
+          echo "::notice::Release skipped - tag ${{ steps.extract_version.outputs.version }} already exists. Use 'force_release' option to override."
+
+      # 10) Upload workflow artifacts (backup/fallback)
+      - name: Upload bafiq binary
+        if: steps.check_tag.outputs.exists == 'true' && github.event.inputs.force_release != 'true'
         uses: actions/upload-artifact@v3
         with:
           name: bafiq-linux
           path: target/release/bafiq
+
+      - name: Upload viewer binary
+        if: steps.check_tag.outputs.exists == 'true' && github.event.inputs.force_release != 'true'
+        uses: actions/upload-artifact@v3
+        with:
+          name: viewer-linux
+          path: target/release/viewer
+
+      - name: Upload unified benchmark binary
+        if: steps.check_tag.outputs.exists == 'true' && github.event.inputs.force_release != 'true'
+        uses: actions/upload-artifact@v3
+        with:
+          name: unified-benchmark-linux
+          path: target/release/unified-benchmark
