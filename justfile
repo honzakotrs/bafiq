@@ -8,14 +8,14 @@ build:
     @echo "Building bafiq..."
     cargo build --release
 
-# Run index build benchmarks with thread scaling analysis
-# Uses default threads: 1,2 (override with BENCH_THREADS="1,2,4,8" just bench)
-bench:
+# Run index build benchmarks with thread scaling analysis (original implementation)
+# Uses default threads: 1,2 (override with BENCH_THREADS="1,2,4,8" just bench-index-orig)
+bench-index-orig:
     #!/usr/bin/env bash
     if [ -z "${BAFIQ_TEST_BAM:-}" ]; then
         echo "Set BAFIQ_TEST_BAM environment variable to run benchmarks"
         echo "   Example: export BAFIQ_TEST_BAM=/path/to/test.bam"
-        echo "   Then run: just bench"
+        echo "   Then run: just bench-index-orig"
     else
         # Resolve max threads upfront for explicit thread control
         MAX_CORES=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo "4")
@@ -32,10 +32,10 @@ bench:
         echo "   Available CPU cores: $MAX_CORES"
         echo "   Thread counts to test: $THREADS"
         echo "   Fast development mode with resource monitoring"
-        echo "   Override threads: BENCH_THREADS=\"1,2,4,8,$MAX_CORES\" just bench"
-        echo "   Use auto threads: BENCH_THREADS=\"auto\" just bench (no --threads/-@ parameters)"
-        echo "   Show memory plots: MEM_PLOTS=1 just bench"
-        echo "   Keep temp files: KEEP_TEMP_FILES=1 just bench"
+        echo "   Override threads: BENCH_THREADS=\"1,2,4,8,$MAX_CORES\" just bench-index-orig"
+        echo "   Use auto threads: BENCH_THREADS=\"auto\" just bench-index-orig (no --threads/-@ parameters)"
+        echo "   Show memory plots: MEM_PLOTS=1 just bench-index-orig"
+        echo "   Keep temp files: KEEP_TEMP_FILES=1 just bench-index-orig"
         echo "   Both bafiq and samtools use explicit --threads/-@ for fair comparison"
         
         # Get original BAM size
@@ -499,23 +499,6 @@ bench:
         # Cleanup (or preservation) happens automatically via trap
     fi
 
-# Run comprehensive index build benchmarks with detailed Criterion analysis
-bench-full:
-    #!/usr/bin/env bash
-    if [ -z "${BAFIQ_TEST_BAM:-}" ]; then
-        echo "Set BAFIQ_TEST_BAM environment variable to run benchmarks"
-        echo "   Example: export BAFIQ_TEST_BAM=/path/to/test.bam"
-        echo "   Then run: just bench-full"
-    else
-        echo "Running detailed Criterion index build benchmarks..."
-        echo "   Statistical analysis with confidence intervals + CSV export (slower)"
-        echo "   Sequential strategy muted for faster iteration (set BAFIQ_BENCH_SEQUENTIAL=1 to include)"
-        if [[ "$OSTYPE" == "linux-gnu"* ]]; then
-            echo "   On Linux, run with sudo for full cache clearing: sudo -E just bench-full"
-        fi
-        BAFIQ_USE_CRITERION=1 cargo bench --bench index_build_bench
-    fi
-
 # Run tests
 test:
     @echo "Running tests..."
@@ -525,13 +508,41 @@ test:
 clean:
     cargo clean
 
-# Benchmark view performance: bafiq vs samtools (vs sambamba if available) with comprehensive CSV metrics
-bench-view:
+# Run index benchmarks with Rust-style arguments (replaces old bench command)
+bench-index *ARGS:
+    #!/usr/bin/env bash
+    echo "Building unified benchmark..."
+    cargo bench --bench unified --no-run
+    echo "Running index benchmark with arguments: {{ARGS}}"
+    BENCH_PATH=$(cargo bench --bench unified --no-run 2>&1 | grep "Executable" | sed 's/.*(\(.*\))/\1/')
+    if [ -n "$BENCH_PATH" ] && [ -f "$BENCH_PATH" ]; then
+        "$BENCH_PATH" index {{ARGS}}
+    else
+        echo "❌ Could not find benchmark executable at: $BENCH_PATH"
+        exit 1
+    fi
+
+# Run view benchmarks with Rust-style arguments
+bench-view *ARGS:
+    #!/usr/bin/env bash
+    echo "Building unified benchmark..."
+    cargo bench --bench unified --no-run
+    echo "Running view benchmark with arguments: {{ARGS}}"
+    BENCH_PATH=$(cargo bench --bench unified --no-run 2>&1 | grep "Executable" | sed 's/.*(\(.*\))/\1/')
+    if [ -n "$BENCH_PATH" ] && [ -f "$BENCH_PATH" ]; then
+        "$BENCH_PATH" view {{ARGS}}
+    else
+        echo "❌ Could not find benchmark executable at: $BENCH_PATH"
+        exit 1
+    fi
+
+# Benchmark view performance: bafiq vs samtools (vs sambamba if available) with comprehensive CSV metrics (original implementation)
+bench-view-orig:
     #!/usr/bin/env bash
     if [ -z "${BAFIQ_TEST_BAM:-}" ]; then
         echo "Set BAFIQ_TEST_BAM environment variable to run view benchmarks"
         echo "   Example: export BAFIQ_TEST_BAM=/path/to/test.bam"
-        echo "   Then run: just bench-view"
+        echo "   Then run: just bench-view-orig"
     else
         # Resolve max threads upfront for explicit thread control
         MAX_CORES=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo "4")
@@ -575,12 +586,12 @@ bench-view:
         echo "   Strategy: $STRATEGY (override with BENCH_STRATEGY=strategy-name)"
         echo "   CSV output and comprehensive memory monitoring"
         echo "   🔧 Will test: bafiq view (+ samtools view + sambamba view if available)"
-        echo "   Override threads: BENCH_THREADS=\"1,2,4,8,$MAX_CORES\" just bench-view"
-        echo "   Use auto threads: BENCH_THREADS=\"auto\" just bench-view"
-        echo "   Multiple BAMs: BAFIQ_SOURCE_BAMS=\"chr1.bam,x.bam\" just bench-view"
-        echo "   Multiple flags: BAFIQ_FLAGS=\"0x4,0x2,0x10\" just bench-view"
-        echo "   Custom flags: BAFIQ_FLAGS=\"0x100,0x200,0x400\" just bench-view"
-        echo "   Keep temp files: KEEP_TEMP_FILES=1 just bench-view"
+        echo "   Override threads: BENCH_THREADS=\"1,2,4,8,$MAX_CORES\" just bench-view-orig"
+        echo "   Use auto threads: BENCH_THREADS=\"auto\" just bench-view-orig"
+        echo "   Multiple BAMs: BAFIQ_SOURCE_BAMS=\"chr1.bam,x.bam\" just bench-view-orig"
+        echo "   Multiple flags: BAFIQ_FLAGS=\"0x4,0x2,0x10\" just bench-view-orig"
+        echo "   Custom flags: BAFIQ_FLAGS=\"0x100,0x200,0x400\" just bench-view-orig"
+        echo "   Keep temp files: KEEP_TEMP_FILES=1 just bench-view-orig"
         
         # Validate BAM files existence before starting
         for bam_file in "${BAM_ARRAY[@]}"; do
@@ -1178,7 +1189,7 @@ bench-view:
             echo "   (Set KEEP_TEMP_FILES=1 to preserve temp directory for manual inspection)"
         fi
         echo ""
-        echo "Use CSV files with plotting tools (same format as 'just bench')"
+        echo "Use CSV files with plotting tools (same format as 'just bench-index-orig')"
     fi
 
 

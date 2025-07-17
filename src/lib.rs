@@ -7,7 +7,6 @@ use std::path::Path;
 pub const FLAG_MASK: u16 = 0xFFFF; // All 16 bits are valid for SAM flags
 pub const N_FLAGS: usize = 65536; // 2^16 possible flag combinations
 
-pub mod benchmark;
 mod bgzf;
 mod compression;
 mod index;

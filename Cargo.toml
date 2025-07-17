@@ -15,7 +15,7 @@ name = "viewer"
 path = "src/bin/viewer.rs"
 
 [[bench]]
-name = "index_build_bench"
+name = "unified"
 harness = false
 
 [dependencies]
