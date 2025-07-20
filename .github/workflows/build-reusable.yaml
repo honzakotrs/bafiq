@@ -1,0 +1,65 @@
+name: Build bafiq (Reusable)
+
+on:
+  workflow_call:
+    inputs:
+      upload_artifacts:
+        description: "Whether to upload build artifacts"
+        required: false
+        default: false
+        type: boolean
+    outputs:
+      artifacts_path:
+        description: "Path to the built artifacts"
+        value: target/release
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      # 1) Check out the repository
+      - uses: actions/checkout@v4
+
+      # 2) Set up the Rust toolchain (stable)
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      # 3) Cache Rust dependencies for faster builds
+      - name: Cache Rust dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      # 4) Build the project in release mode
+      - name: Build bafiq
+        run: cargo build --release
+
+      # 5) Build benchmarks in release mode
+      - name: Build benchmarks
+        run: cargo build --release --benches
+
+      # 6) Copy benchmark binary to predictable name
+      - name: Copy unified benchmark
+        run: |
+          # Find the unified benchmark executable and copy it to a known name
+          find target/release/deps -name "unified-*" -type f -executable | head -1 | xargs -I {} cp {} target/release/unified-benchmark
+
+      # 7) Upload build artifacts if requested
+      - name: Upload build artifacts
+        if: inputs.upload_artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: bafiq-build-${{ github.sha }}
+          path: |
+            target/release/bafiq
+            target/release/viewer
+            target/release/unified-benchmark
+          retention-days: 7
