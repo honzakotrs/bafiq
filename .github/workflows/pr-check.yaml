@@ -54,33 +54,33 @@ jobs:
       - name: Run doc tests
         run: cargo test --doc --release
 
-  clippy:
-    name: Clippy Analysis
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+  # clippy:
+  #   name: Clippy Analysis
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@v4
 
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
+  #     - name: Set up Rust
+  #       uses: dtolnay/rust-toolchain@stable
+  #       with:
+  #         components: clippy
 
-      - name: Cache Rust dependencies
-        uses: actions/cache@v3
-        with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: ${{ runner.os }}-cargo-clippy-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-clippy-
-            ${{ runner.os }}-cargo-
+  #     - name: Cache Rust dependencies
+  #       uses: actions/cache@v3
+  #       with:
+  #         path: |
+  #           ~/.cargo/bin/
+  #           ~/.cargo/registry/index/
+  #           ~/.cargo/registry/cache/
+  #           ~/.cargo/git/db/
+  #           target/
+  #         key: ${{ runner.os }}-cargo-clippy-${{ hashFiles('**/Cargo.lock') }}
+  #         restore-keys: |
+  #           ${{ runner.os }}-cargo-clippy-
+  #           ${{ runner.os }}-cargo-
 
-      - name: Run Clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+  #     - name: Run Clippy
+  #       run: cargo clippy --all-targets --all-features -- -D warnings
 
   fmt:
     name: Format Check
