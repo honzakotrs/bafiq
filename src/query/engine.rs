@@ -1,7 +1,7 @@
 // Query engine for efficient BAM record retrieval using block-based indexes
 
 use crate::index::format::{IndexAccessor, SerializableIndex};
-use crate::{FlagIndex, FLAG_MASK, N_FLAGS};
+use crate::{FLAG_MASK, FlagIndex, N_FLAGS};
 use anyhow::Result;
 use rust_htslib::bam::{self, Read, Writer};
 use std::collections::HashSet;

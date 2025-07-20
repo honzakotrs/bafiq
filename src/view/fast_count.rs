@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use crossbeam::channel::unbounded;
 use libdeflater::Decompressor;
 use memmap2::Mmap;
@@ -7,7 +7,7 @@ use std::ptr;
 use std::sync::Arc;
 use std::thread as std_thread;
 
-use crate::bgzf::{is_bgzf_header, BGZF_BLOCK_MAX_SIZE, BGZF_FOOTER_SIZE, BGZF_HEADER_SIZE};
+use crate::bgzf::{BGZF_BLOCK_MAX_SIZE, BGZF_FOOTER_SIZE, BGZF_HEADER_SIZE, is_bgzf_header};
 
 /// Fast scan-only mode - count flags without building index
 /// Single-pass streaming approach comparable to samtools performance

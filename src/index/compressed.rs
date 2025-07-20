@@ -1,5 +1,5 @@
-use crate::compression::{DeltaDecoder, DeltaEncoder, SparseStorage};
 use crate::FlagIndex;
+use crate::compression::{DeltaDecoder, DeltaEncoder, SparseStorage};
 use anyhow::Result;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};

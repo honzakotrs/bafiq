@@ -1,8 +1,8 @@
-use crate::bgzf::{
-    is_bgzf_header, BlockInfo, BGZF_BLOCK_MAX_SIZE, BGZF_FOOTER_SIZE, BGZF_HEADER_SIZE,
-};
 use crate::FlagIndex;
-use anyhow::{anyhow, Result};
+use crate::bgzf::{
+    BGZF_BLOCK_MAX_SIZE, BGZF_FOOTER_SIZE, BGZF_HEADER_SIZE, BlockInfo, is_bgzf_header,
+};
+use anyhow::{Result, anyhow};
 use libdeflater::Decompressor;
 use std::ptr;
 

@@ -1,13 +1,13 @@
 use crate::FlagIndex;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use clap::ValueEnum;
 
 use std::path::Path;
 
 // Import strategies
 use crate::index::strategies::{
-    channel_pc::ChannelProducerConsumerStrategy, constant_memory::ConstantMemoryStrategy,
-    work_stealing::WorkStealingStrategy, IndexingStrategy,
+    IndexingStrategy, channel_pc::ChannelProducerConsumerStrategy,
+    constant_memory::ConstantMemoryStrategy, work_stealing::WorkStealingStrategy,
 };
 
 /// Primary interface for building flag indexes with different strategies

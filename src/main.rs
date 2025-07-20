@@ -1,11 +1,11 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use clap::{Parser, Subcommand};
 use rayon::ThreadPoolBuilder;
 use rust_htslib::bam::{Format, Read as BamRead, Writer};
 use std::path::{Path, PathBuf};
 
 use bafiq::{
-    view::fast_count::scan_count, BuildStrategy, IndexBuilder, IndexManager, SerializableIndex,
+    BuildStrategy, IndexBuilder, IndexManager, SerializableIndex, view::fast_count::scan_count,
 };
 
 /// Parse flag values supporting hex (0x4), decimal (4), and binary (0b100) formats like samtools

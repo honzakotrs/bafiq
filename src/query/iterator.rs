@@ -1,7 +1,7 @@
 // Query iterators for streaming BAM record retrieval with block-based indexes
 
-use crate::query::{QueryEngine, QueryRequest};
 use crate::SerializableIndex;
+use crate::query::{QueryEngine, QueryRequest};
 use anyhow::Result;
 use rust_htslib::bam::{self, Read};
 use std::path::Path;
