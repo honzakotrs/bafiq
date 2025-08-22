@@ -56,18 +56,6 @@ just bench-index --help
 just bench-view --help
 ```
 
-## Legacy Commands
-
-For backwards compatibility, environment variable-based commands are available:
-
-```bash
-# Legacy index benchmarks 
-BENCH_THREADS="2,max" BAFIQ_TEST_BAM=/my.bam just bench-index-orig
-
-# Legacy view benchmarks (supports multiple combinations)
-BENCH_THREADS="2,max" BAFIQ_FLAGS="0x4,0x10,0x2" BAFIQ_SOURCE_BAMS="hg38.chr22.bam,chr1.bam" just bench-view-orig
-```
-
 ## Manual Build
 
 ```bash

@@ -66,7 +66,7 @@ pub fn extract_flags_from_block_pooled(
     }
 
     // Optimized record parsing with better memory access patterns
-    extract_flags_from_decompressed_simd_optimized(
+    extract_flags_from_decompressed_mem_optimized(
         output_buffer,
         decompressed_size,
         index,
@@ -77,9 +77,9 @@ pub fn extract_flags_from_block_pooled(
     Ok(record_count)
 }
 
-/// SIMD-optimized record parsing with prefetching and better memory access patterns
+/// Memory-optimized record parsing with prefetching and better memory access patterns
 #[inline(always)]
-pub fn extract_flags_from_decompressed_simd_optimized(
+pub fn extract_flags_from_decompressed_mem_optimized(
     output_buffer: &[u8],
     decompressed_size: usize,
     index: &mut FlagIndex,
