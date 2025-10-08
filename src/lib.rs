@@ -425,4 +425,128 @@ mod tests {
         index2.add_record_at_block(0x40, 102);
         assert!(!index1.is_equivalent_to(&index2));
     }
+
+    /// Test that we correctly handle BAM record headers split across BGZF block boundaries
+    #[test]
+    fn test_split_record_header_across_blocks() {
+        use crate::index::discovery::{
+            extract_flags_from_block_pooled, process_incomplete_with_compressed_block,
+        };
+        use libdeflater::Compressor;
+
+        // Helper to create a BGZF block
+        fn create_bgzf_block(uncompressed_data: &[u8]) -> Vec<u8> {
+            let mut compressor = Compressor::new(libdeflater::CompressionLvl::default());
+            let mut compressed = vec![0u8; uncompressed_data.len() + 1024];
+
+            let compressed_size = compressor
+                .gzip_compress(uncompressed_data, &mut compressed)
+                .unwrap();
+            compressed.truncate(compressed_size);
+            compressed
+        }
+
+        // Create a minimal BAM record with flags = 0x63 (99)
+        // BAM record format per SAM spec v1.6 Section 4.2:
+        // [block_size: int32 (4 bytes)] - size of the rest of the record
+        // Record body:
+        //   [refID: int32 (4 bytes)]         - offset 0 in body, bytes 4-7 total
+        //   [pos: int32 (4 bytes)]           - offset 4 in body, bytes 8-11 total
+        //   [l_read_name: uint8 (1 byte)]    - offset 8 in body, byte 12 total
+        //   [mapq: uint8 (1 byte)]           - offset 9 in body, byte 13 total
+        //   [bin: uint16 (2 bytes)]          - offset 10 in body, bytes 14-15 total
+        //   [n_cigar_op: uint16 (2 bytes)]   - offset 12 in body, bytes 16-17 total
+        //   [flag: uint16 (2 bytes)]         - offset 14 in body, bytes 18-19 total ← FLAGS
+        //   [l_seq: int32 (4 bytes)]         - offset 16 in body, bytes 20-23 total
+        //   [next_refID: int32 (4 bytes)]    - offset 20 in body, bytes 24-27 total
+        //   [next_pos: int32 (4 bytes)]      - offset 24 in body, bytes 28-31 total
+        //   [tlen: int32 (4 bytes)]          - offset 28 in body, bytes 32-35 total
+        //   [read_name: char[l_read_name]]   - variable length
+        //   [cigar: uint32[n_cigar_op]]      - variable length
+        //   [seq: uint8[(l_seq+1)/2]]        - variable length
+        //   [qual: char[l_seq]]              - variable length
+
+        let mut record = Vec::new();
+        record.extend_from_slice(&33u32.to_le_bytes()); // block_size: 33 bytes
+        // Record body (offset 4):
+        record.extend_from_slice(&(-1i32).to_le_bytes()); // refID
+        record.extend_from_slice(&(-1i32).to_le_bytes()); // pos
+        record.push(1); // l_read_name = 1 (just null)
+        record.push(0); // mapq = 0
+        record.extend_from_slice(&0u16.to_le_bytes()); // bin = 0
+        record.extend_from_slice(&0u16.to_le_bytes()); // n_cigar_op = 0
+        record.extend_from_slice(&0x63u16.to_le_bytes()); // flag = 0x63 (99)
+        record.extend_from_slice(&0u32.to_le_bytes()); // l_seq = 0
+        record.extend_from_slice(&(-1i32).to_le_bytes()); // next_refID
+        record.extend_from_slice(&(-1i32).to_le_bytes()); // next_pos
+        record.extend_from_slice(&0i32.to_le_bytes()); // tlen
+        record.push(0); // read_name null terminator
+
+        assert_eq!(
+            record.len(),
+            37,
+            "Record should be 37 bytes (4 block_size + 33 body)"
+        );
+
+        // Create Block 1: Contains only the first 12 bytes of the record (incomplete header)
+        // Per SAM spec v1.6: need 20 bytes total to read flags at offset 18-19, so this is incomplete
+        let block1_data = record[..12].to_vec();
+        let block1 = create_bgzf_block(&block1_data);
+
+        // Create Block 2: Contains the remaining bytes (starting from byte 12)
+        let block2_data = record[12..].to_vec();
+        let block2 = create_bgzf_block(&block2_data);
+
+        // Test Block 1: Should detect incomplete header
+        let mut index1 = FlagIndex::new();
+        let mut buffer1 = vec![0u8; 65536];
+        let mut decompressor1 = libdeflater::Decompressor::new();
+
+        let (count1, incomplete) = extract_flags_from_block_pooled(
+            &block1,
+            &mut index1,
+            0,
+            &mut buffer1,
+            &mut decompressor1,
+        )
+        .expect("Failed to process block 1");
+
+        assert_eq!(count1, 0, "Block 1 should not extract any complete records");
+        assert!(
+            incomplete.is_some(),
+            "Block 1 should detect incomplete header"
+        );
+
+        let incomplete = incomplete.unwrap();
+        assert_eq!(
+            incomplete.partial_data.len(),
+            12,
+            "Should have 12 bytes of partial data"
+        );
+        assert_eq!(
+            incomplete.bytes_needed, 8,
+            "Should need 8 more bytes (20 - 12)"
+        );
+
+        // Test Block 2: Process the incomplete header with block 2
+        let boundary_index = process_incomplete_with_compressed_block(&incomplete, &block2, 0)
+            .expect("Failed to process boundary record");
+
+        assert_eq!(
+            boundary_index.total_records(),
+            1,
+            "Should extract 1 record from boundary"
+        );
+        assert_eq!(
+            boundary_index.count(0x63, 0x0),
+            1,
+            "Should find record with flags=0x63"
+        );
+
+        // Verify the split record was correctly indexed
+        let summary = boundary_index.get_flag_summary();
+        assert_eq!(summary.len(), 1, "Should have exactly 1 flag combination");
+        assert_eq!(summary[0].0, 0x63, "Flag should be 0x63");
+        assert_eq!(summary[0].1, 1, "Should have 1 record with this flag");
+    }
 }

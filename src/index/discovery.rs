@@ -98,7 +98,10 @@ pub fn extract_flags_from_decompressed_mem_optimized(
     record_count: &mut usize,
 ) -> Result<Option<IncompleteHeader>> {
     let mut pos = 0;
-    const HEADER_SIZE: usize = 16; // 4 bytes size + 12 bytes to reach flags
+    // BAM record header size to read flags (SAM spec v1.6 Section 4.2):
+    // block_size(4) + refID(4) + pos(4) + l_read_name(1) + mapq(1) +
+    // bin(2) + n_cigar_op(2) + flag(2) = 20 bytes to read the flag field
+    const HEADER_SIZE: usize = 20;
 
     // Process records in chunks for better cache locality
     unsafe {
@@ -169,7 +172,10 @@ pub fn process_incomplete_header(
     index: &mut FlagIndex,
     block_id: i64,
 ) -> Result<()> {
-    const HEADER_SIZE: usize = 16;
+    // BAM record header size to read flags (SAM spec v1.6 Section 4.2):
+    // block_size(4) + refID(4) + pos(4) + l_read_name(1) + mapq(1) +
+    // bin(2) + n_cigar_op(2) + flag(2) = 20 bytes to read the flag field
+    const HEADER_SIZE: usize = 20;
 
     // Ensure we have enough bytes from next block
     if next_block_decompressed_data.len() < incomplete.bytes_needed {
