@@ -1,6 +1,6 @@
 # bafiq
 
-BAM Flag Index Query
+BAM Flag Index Query - A rust CLI tool to index and extract aligned sequences from a BAM file by their FLAG combination.
 
 ## Usage
 
