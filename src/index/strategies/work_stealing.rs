@@ -7,7 +7,10 @@ use std::sync::Arc;
 use super::IndexingStrategy;
 use crate::FlagIndex;
 use crate::bgzf::BGZF_BLOCK_MAX_SIZE;
-use crate::index::discovery::{discover_blocks_fast, extract_flags_from_block_pooled};
+use crate::index::discovery::{
+    IncompleteHeader, discover_blocks_fast, extract_flags_from_block_pooled,
+    process_incomplete_with_compressed_block,
+};
 
 /// **WORK STEALING STRATEGY** - The fastest performing approach (3.409s)
 ///
@@ -48,9 +51,9 @@ impl IndexingStrategy for WorkStealingStrategy {
 
         // **PHASE 2: MAXIMUM PARALLEL PROCESSING**
         // Scale to utilize all CPU cores effectively
-        let local_indexes: Vec<FlagIndex> = blocks
+        let results: Vec<(FlagIndex, Option<IncompleteHeader>)> = blocks
             .par_iter()  // Process each block in parallel across all cores
-            .map(|block_info| -> Result<FlagIndex> {
+            .map(|block_info| -> Result<(FlagIndex, Option<IncompleteHeader>)> {
                 let mut local_index = FlagIndex::new();
                 let block = &data[block_info.start_pos..block_info.start_pos + block_info.total_size];
                 let block_offset = block_info.start_pos as i64;
@@ -60,7 +63,7 @@ impl IndexingStrategy for WorkStealingStrategy {
                    static DECOMPRESSOR: std::cell::RefCell<libdeflater::Decompressor> = std::cell::RefCell::new(libdeflater::Decompressor::new());
                }
                // **WAIT-FREE PROCESSING** - no blocking operations
-               BUFFER.with(|buf| {
+               let (_count, incomplete) = BUFFER.with(|buf| {
                    DECOMPRESSOR.with(|decomp| {
                        let mut buffer = buf.borrow_mut();
                        let mut decompressor = decomp.borrow_mut();
@@ -73,9 +76,48 @@ impl IndexingStrategy for WorkStealingStrategy {
                        )
                    })
                })?;
-               Ok(local_index)
+               Ok((local_index, incomplete))
            })
            .collect::<Result<Vec<_>, _>>()?;
+
+        // Extract local indexes and incomplete headers
+        let mut local_indexes: Vec<FlagIndex> = Vec::with_capacity(results.len());
+        let mut incomplete_headers: Vec<(usize, IncompleteHeader)> = Vec::new();
+
+        for (idx, (index, incomplete)) in results.into_iter().enumerate() {
+            local_indexes.push(index);
+            if let Some(incomplete) = incomplete {
+                incomplete_headers.push((idx, incomplete));
+            }
+        }
+
+        // Handle split records sequentially - minimal performance impact due to rarity
+        if !incomplete_headers.is_empty() {
+            let mut boundary_index = FlagIndex::new();
+
+            for (block_idx, incomplete) in incomplete_headers {
+                // Check if there's a next block to get completion data from
+                if block_idx + 1 < blocks.len() {
+                    let next_block = &blocks[block_idx + 1];
+                    let next_block_data =
+                        &data[next_block.start_pos..next_block.start_pos + next_block.total_size];
+                    let block_offset = blocks[block_idx].start_pos as i64;
+
+                    // Use shared helper to decompress and process
+                    match process_incomplete_with_compressed_block(
+                        &incomplete,
+                        next_block_data,
+                        block_offset,
+                    ) {
+                        Ok(index) => boundary_index.merge(index),
+                        Err(e) => eprintln!("Warning: Failed to process boundary record: {}", e),
+                    }
+                }
+            }
+
+            // Add boundary records to the local indexes
+            local_indexes.push(boundary_index);
+        }
 
         // **PHASE 3: PARALLEL MERGE-TREE**
         // Use divide-and-conquer merge tree instead of sequential O(n²) merging

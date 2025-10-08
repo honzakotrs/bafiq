@@ -7,7 +7,9 @@ use std::io::{Read, Seek, SeekFrom};
 use super::IndexingStrategy;
 use crate::FlagIndex;
 use crate::bgzf::{BGZF_BLOCK_MAX_SIZE, BGZF_FOOTER_SIZE, BGZF_HEADER_SIZE, is_bgzf_header};
-use crate::index::discovery::extract_flags_from_block_pooled;
+use crate::index::discovery::{
+    IncompleteHeader, extract_flags_from_block_pooled, process_incomplete_with_compressed_block,
+};
 
 /// Information about a BGZF block's location in the file
 #[derive(Debug, Clone)]
@@ -190,6 +192,7 @@ fn discover_complete_blocks_in_chunk(
 
 /// **CONSTANT MEMORY PROCESSING**
 /// Read blocks in small batches, process immediately, no accumulation
+/// Now handles incomplete headers across block boundaries
 fn process_blocks_streaming_no_accumulation(
     file: &mut File,
     blocks: &[BlockInfo],
@@ -199,11 +202,12 @@ fn process_blocks_streaming_no_accumulation(
     }
 
     let mut final_index = FlagIndex::new();
+    let mut carry_incomplete: Option<(IncompleteHeader, i64)> = None;
 
     // **PROCESS IN TINY BATCHES** - 5 blocks at a time for constant memory
     const MICRO_BATCH_SIZE: usize = 5;
 
-    for block_batch in blocks.chunks(MICRO_BATCH_SIZE) {
+    for (batch_idx, block_batch) in blocks.chunks(MICRO_BATCH_SIZE).enumerate() {
         // **SEQUENTIAL READ** - Only 5 blocks in memory max
         let mut blocks_data = Vec::with_capacity(block_batch.len());
         for block_info in block_batch {
@@ -214,15 +218,15 @@ fn process_blocks_streaming_no_accumulation(
         }
 
         // **PARALLEL PROCESSING** - Only 5 blocks
-        let local_indexes: Vec<FlagIndex> = blocks_data
+        let results: Vec<(FlagIndex, Option<IncompleteHeader>)> = blocks_data
             .par_iter()
-            .map(|(block_data, block_offset)| -> Result<FlagIndex> {
+            .map(|(block_data, block_offset)| -> Result<(FlagIndex, Option<IncompleteHeader>)> {
                 let mut local_index = FlagIndex::new();
                 thread_local! {
                     static BUFFER: std::cell::RefCell<Vec<u8>> = std::cell::RefCell::new(vec![0u8; BGZF_BLOCK_MAX_SIZE]);
                     static DECOMPRESSOR: std::cell::RefCell<Decompressor> = std::cell::RefCell::new(Decompressor::new());
                 }
-                BUFFER.with(|buf| {
+                let (_count, incomplete) = BUFFER.with(|buf| {
                     DECOMPRESSOR.with(|decomp| {
                         let mut buffer = buf.borrow_mut();
                         let mut decompressor = decomp.borrow_mut();
@@ -235,9 +239,46 @@ fn process_blocks_streaming_no_accumulation(
                         )
                     })
                 })?;
-                Ok(local_index)
+                Ok((local_index, incomplete))
             })
             .collect::<Result<Vec<_>>>()?;
+
+        // Extract indexes and check for incomplete headers
+        let mut local_indexes: Vec<FlagIndex> = Vec::with_capacity(results.len());
+        let mut new_incomplete: Option<(IncompleteHeader, i64)> = None;
+
+        for (idx, (index, incomplete)) in results.into_iter().enumerate() {
+            local_indexes.push(index);
+
+            // Process carry-over from previous batch if this is the first block
+            if idx == 0 && batch_idx > 0 {
+                if let Some((prev_incomplete, prev_block_offset)) = carry_incomplete.take() {
+                    // Use first block to complete the header
+                    let (first_block_data, _) = &blocks_data[0];
+
+                    // Use shared helper to decompress and process
+                    match process_incomplete_with_compressed_block(
+                        &prev_incomplete,
+                        first_block_data,
+                        prev_block_offset,
+                    ) {
+                        Ok(boundary_index) => local_indexes.push(boundary_index),
+                        Err(e) => eprintln!("Warning: Failed to process boundary record: {}", e),
+                    }
+                }
+            }
+
+            // Save incomplete from last block in batch
+            if idx == block_batch.len() - 1 {
+                if let Some(incomplete) = incomplete {
+                    let block_offset = blocks_data[idx].1;
+                    new_incomplete = Some((incomplete, block_offset));
+                }
+            }
+        }
+
+        // Save carry-over for next batch
+        carry_incomplete = new_incomplete;
 
         // **IMMEDIATE MERGE** - Process each micro-batch immediately
         let batch_index = FlagIndex::merge_parallel(local_indexes);
