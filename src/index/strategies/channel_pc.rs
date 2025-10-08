@@ -9,7 +9,9 @@ use std::sync::Arc;
 use super::IndexingStrategy;
 use crate::FlagIndex;
 use crate::bgzf::{BGZF_BLOCK_MAX_SIZE, BGZF_FOOTER_SIZE, BGZF_HEADER_SIZE, is_bgzf_header};
-use crate::index::discovery::{extract_flags_from_block_pooled, process_incomplete_with_compressed_block, IncompleteHeader};
+use crate::index::discovery::{
+    IncompleteHeader, extract_flags_from_block_pooled, process_incomplete_with_compressed_block,
+};
 
 pub struct ChannelProducerConsumerStrategy;
 
@@ -32,7 +34,7 @@ impl IndexingStrategy for ChannelProducerConsumerStrategy {
                 let mut pos = 0;
                 let data_len = data_producer.len();
                 let mut block_index = 0;
-                
+
                 while pos < data_len {
                     if pos + BGZF_HEADER_SIZE > data_len {
                         break;
@@ -106,23 +108,23 @@ impl IndexingStrategy for ChannelProducerConsumerStrategy {
                     })
                 })
                 .collect();
-            
+
             // Drop the sender so incomplete_receiver will finish
             drop(incomplete_sender);
 
             // Combine results using parallel merge tree
             let mut local_indexes: Vec<FlagIndex> = results.into_iter().map(|handle| handle.join().unwrap()).collect();
-            
+
             // Collect all incomplete headers
             let incomplete_headers: Vec<(usize, IncompleteHeader)> = incomplete_receiver.iter().collect();
-            
+
             // Process boundary records if any exist
             if !incomplete_headers.is_empty() {
                 // First, rebuild block list to access adjacent blocks
                 let mut blocks = Vec::new();
                 let mut pos = 0;
                 let data_len = data.len();
-                
+
                 while pos < data_len {
                     if pos + BGZF_HEADER_SIZE > data_len {
                         break;
@@ -142,16 +144,16 @@ impl IndexingStrategy for ChannelProducerConsumerStrategy {
                     blocks.push((pos, total_size));
                     pos += total_size;
                 }
-                
+
                 // Process incomplete headers with next blocks
                 let mut boundary_index = FlagIndex::new();
-                
+
                 for (block_idx, incomplete) in incomplete_headers {
                     if block_idx + 1 < blocks.len() {
                         let (next_start, next_size) = blocks[block_idx + 1];
                         let next_block_data = &data[next_start..next_start + next_size];
                         let (block_start, _) = blocks[block_idx];
-                        
+
                         // Use shared helper to decompress and process
                         match process_incomplete_with_compressed_block(&incomplete, next_block_data, block_start as i64) {
                             Ok(index) => boundary_index.merge(index),
@@ -159,10 +161,10 @@ impl IndexingStrategy for ChannelProducerConsumerStrategy {
                         }
                     }
                 }
-                
+
                 local_indexes.push(boundary_index);
             }
-            
+
             let final_index = FlagIndex::merge_parallel(local_indexes);
 
             Ok(final_index)
